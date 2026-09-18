@@ -1,0 +1,15 @@
+{
+  "version": "0.7.16-ko.1",
+  "build": {
+    "beforeBuildCommand": "npm run i18n:check && npm run build"
+  },
+  "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "languages": ["Korean"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

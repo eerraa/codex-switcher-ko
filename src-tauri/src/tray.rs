@@ -36,16 +36,16 @@ pub fn init(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     // Windows 右键需要真正挂载 native menu；仅监听 TrayIconEvent 会把右键
     // 也当成 popup 点击，系统不会自动生成完整托盘菜单。
-    let show_main = MenuItem::with_id(app, "tray-show-main", "打开主窗口", true, None::<&str>)?;
+    let show_main = MenuItem::with_id(app, "tray-show-main", "기본 창 열기", true, None::<&str>)?;
     let next_account = MenuItem::with_id(
         app,
         "tray-next-account",
-        "切换到下一个账号",
+        "다음 계정으로 전환",
         true,
         None::<&str>,
     )?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let quit = PredefinedMenuItem::quit(app, Some("退出"))?;
+    let quit = PredefinedMenuItem::quit(app, Some("종료"))?;
     let menu = Menu::with_items(app, &[&show_main, &next_account, &separator, &quit])?;
 
     let _tray = TrayIconBuilder::with_id("main")
@@ -197,14 +197,14 @@ pub fn update_tray_menu(app: &AppHandle) {
                 let quota = acc
                     .cached_quota
                     .as_ref()
-                    .map(|q| format!(" | 5H: {:.0}%  周: {:.0}%", q.five_hour_left, q.weekly_left))
+                    .map(|q| format!(" | 5시간: {:.0}%  주간: {:.0}%", q.five_hour_left, q.weekly_left))
                     .unwrap_or_default();
                 format!("Codex Switcher - {}{}", acc.name, quota)
             } else {
                 "Codex Switcher".to_string()
             }
         } else {
-            "Codex Switcher - 未登录".to_string()
+            "Codex Switcher - 로그인되지 않음".to_string()
         }
         // store guard 在 block 结束（这一行）时 drop，set_tooltip 在外面跑
     };

@@ -1,0 +1,43 @@
+{
+  "preserveFunctions": {
+    "src/hooks/useCountdown.ts": ["useCountdown", "useShortCountdown"],
+    "src/components/referral.ts": ["referralProgramLabel"]
+  },
+  "preserveProperties": {
+    "src/data/relay_presets.ts": ["group"],
+    "src/components/AddRelayModal.tsx": ["id"]
+  },
+  "preserveVariables": {
+    "src/components/AddRelayModal.tsx": ["key"]
+  },
+  "preserveAttributes": {
+    "src/components/AntigravityQuota.tsx": ["windowLabel"]
+  },
+  "ignore": {},
+  "displayTemplates": {
+    "src/components/AntigravityQuota.tsx": {"windowLabel || ''": 1},
+    "src/components/RelayQuotaWindows.tsx": {"compactLabel": 1}
+  },
+  "reasonCharts": {
+    "src/components/Stats.tsx": {"reasonData": 1}
+  },
+  "display": {
+    "src/components/AntigravityQuota.tsx": {"windowLabel": 2, "blocked ? '7D耗尽' : compact ? compactReset(resetText) : resetText": 1},
+    "src/App.tsx": {"error": 1, "schedulerError": 1, "proxyNotice": 1},
+    "src/components/AccountList.tsx": {"displayTime": 1, "label": 3, "pushToast.text": 1, "expiryError": 1, "primeEditor.lastError": 1, "primeError": 1, "resetListError": 1},
+    "src/components/AddAccountModal.tsx": {"bulkError": 1, "err.reason": 1, "relayError": 1, "error": 3},
+    "src/components/AddRelayModal.tsx": {"g.id": 1, "error": 1},
+    "src/components/AddRouteModal.tsx": {"sessionsError": 1, "error": 1},
+    "src/components/ConfirmModal.tsx": {"message": 1},
+    "src/components/Proxy.tsx": {"message.text": 1},
+    "src/components/ReferralInviteModal.tsx": {"error": 1, "result.message": 1, "trackingError": 1, "referralProgramLabel(program)": 1},
+    "src/components/ReferralQuotaCard.tsx": {"error": 1, "referralProgramLabel(program)": 1},
+    "src/components/RelayImportConfirm.tsx": {"error": 1},
+    "src/components/RelayQuotaWindows.tsx": {"compactLabel": 1},
+    "src/components/SessionRoutes.tsx": {"error": 1},
+    "src/components/Settings.tsx": {"message.text": 1},
+    "src/components/Skills.tsx": {"message.text": 1},
+    "src/components/Stats.tsx": {"e.reason": 2},
+    "src/components/UsageCard.tsx": {"error": 1, "fiveHourTimeLeft || usage.five_hour_reset": 1, "weeklyTimeLeft || usage.weekly_reset": 1}
+  }
+}

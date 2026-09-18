@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "i18n:audit": "node ko/audit.mjs",
+    "i18n:typecheck": "node ko/typecheck.mjs",
+    "i18n:test": "node --test ko/*.test.mjs",
+    "i18n:check": "npm run i18n:audit && npm run i18n:typecheck && npm run i18n:test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",
