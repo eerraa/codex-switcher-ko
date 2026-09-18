@@ -1,5 +1,16 @@
 # Project agents — codex-switcher
 
+## Korean fork contract (takes precedence for this fork)
+
+- Entry: `ko/README.md`; baseline/version: `ko/upstream.json`; failures: `npm run i18n:check`.
+- Scope: Korean presentation, localization checks, release packaging only. Keep `src/` byte-identical to the selected upstream baseline; native differences are reviewed tray literals only.
+- Do not alter proxy/account/routing/auth behavior, user data, global toolchains, installed apps, or upstream's private-machine deployment settings.
+- Before sync, inspect the selected upstream commit diff and audit failures, not the whole repository. Stable tags may be ahead of `upstream/main`.
+- Preserve Chinese matching keys, narrow types, grouping values, regexes, logs, and opaque user content. Translate only reviewed presentation boundaries.
+- Run transformed typecheck and regression tests, not only upstream `tsc`. Accept source-review hashes only after reviewing changed source; never auto-accept in CI.
+- Keep documents current and compact; replace obsolete facts. No patch diaries, redundant code summaries, or per-change comments. History belongs in Git.
+- Do not run live-account smoke tests, install packages, or publish upstream PRs without explicit authorization. Korean release workflow only produces an artifact; publishing is separate.
+
 Tauri 2 desktop app that proxies codex CLI / Claude Code traffic across
 multiple ChatGPT / Relay accounts. Routing rules from
 `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` apply here too.

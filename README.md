@@ -1,3 +1,13 @@
+# Codex Switcher 한국어 UI 포크
+
+[VallierDev/codex-switcher](https://github.com/VallierDev/codex-switcher)의 기능을 유지하는 한국어 표시 레이어입니다. 번역·검사·한국어 패키징만 관리합니다.
+
+**한국어판 안내·빌드·업데이트 절차:** [ko/README.md](ko/README.md) · **정확한 원본 기준과 한국어판 버전:** [ko/upstream.json](ko/upstream.json)
+
+원본과 앱 식별자·인증 저장소를 공유합니다. 별도 계정 격리 앱이 아니며, 원본과 동시에 실행하지 마세요. 아래는 변경하지 않은 upstream README입니다. 아래의 배지·다운로드 링크는 한국어판이 아닐 수 있습니다.
+
+---
+
 # Codex Switcher
 
 [![Release](https://img.shields.io/github/v/release/xtftbwvfp/codex-switcher?style=flat-square)](https://github.com/xtftbwvfp/codex-switcher/releases/latest)
