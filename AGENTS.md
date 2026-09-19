@@ -3,7 +3,7 @@
 ## Korean fork contract (takes precedence for this fork)
 
 - Entry: `ko/README.md`; baseline/version: `ko/upstream.json`; failures: `npm run i18n:check`.
-- Scope: Korean presentation, localization checks, release packaging only. Keep `src/` byte-identical to the selected upstream baseline; native differences are reviewed tray literals only.
+- Scope: Korean presentation, localization checks, release packaging, and explicitly reviewed upstream-submitted platform compatibility fixes. Keep compatibility commits separate from Korean copy; no independent product features or general refactoring.
 - Do not alter proxy/account/routing/auth behavior, user data, global toolchains, installed apps, or upstream's private-machine deployment settings.
 - Before sync, inspect the selected upstream commit diff and audit failures, not the whole repository. Stable tags may be ahead of `upstream/main`.
 - Preserve Chinese matching keys, narrow types, grouping values, regexes, logs, and opaque user content. Translate only reviewed presentation boundaries.

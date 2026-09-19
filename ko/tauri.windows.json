@@ -1,5 +1,5 @@
 {
-  "version": "0.7.16-ko.2",
+  "version": "0.7.16-ko.3",
   "build": {
     "beforeBuildCommand": "npm run i18n:check && npm run build"
   },

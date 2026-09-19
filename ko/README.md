@@ -2,9 +2,9 @@
 
 ## 기준과 범위
 
-정본 버전은 `upstream.json`이다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 최신 릴리스 태그가 `upstream/main`보다 앞설 수 있으므로 버전명과 실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
+정본 버전은 `upstream.json`이다. 현재 별도 적용한 호환성 PR은 같은 파일의 `compatibilityPR`로 추적한다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 최신 릴리스 태그가 `upstream/main`보다 앞설 수 있으므로 버전명과 실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
 
-한국어 기본 UI, 한국어 트레이, 표시 전용 오류·시간·통계 문구, 번역 검사, Windows 패키징만 변경한다. 언어 선택기·설정 migration·기능 개선·CSS 변경·새 의존성은 없다. `src/`는 원본 그대로이며 Rust 차이는 `tray.rs`의 표시 문자열 5개뿐이다.
+한국어 표시·번역 검사·Windows 패키징과 upstream 제출용 플랫폼 호환성 패치만 유지한다. 호환성 변경은 한국어 커밋과 분리하고 upstream 수용 시 중복을 제거한다. 계정·인증·라우팅 알고리즘, 사용자 데이터 스키마, 별명 등 독자 기능은 변경하지 않는다. 새 의존성은 없다. 번역 자체는 `src/`를 재작성하지 않는 빌드 레이어이며, 기능 소스 차이는 검토된 플랫폼 경계와 원래 트레이 번역에 한정한다.
 
 ## 구조: 원본 보존형 빌드 레이어
 
@@ -19,6 +19,8 @@
 | `typecheck.mjs`, `*.test.mjs` | 변환된 코드의 타입 검사와 원본 대비 기능 보호 회귀 검사. 원본 `tsc` 통과만으로 완료 처리하지 않는다. |
 | `smoke.mjs`, `browser-fixture.mjs` | 격리된 Chromium과 가짜 Tauri IPC로 UI를 확인한다. 테스트 산출물/프로필은 Git에서 제외한 `.smoke.local/`에 저장한다. |
 | `tauri.windows.json`, `build-windows.mjs` | 한국어판 버전·한국어 NSIS 설치 프로그램·빌드 전 검사. 원본 Cargo/Tauri 버전 파일은 유지한다. |
+| `../scripts/windows-ui-smoke.mjs`, `../scripts/windows-compat.test.mjs` | upstream 공용 경계 회귀 검사. 380×410 트레이, 긴 OAuth URL, 복사 실패·재시도·닫기, Windows 플랫폼 분기를 가짜 IPC로 검증한다. |
+
 
 원안의 모든 JSX를 `t(key)`로 바꾸는 방식 대신 소스를 보존하여 병합 충돌을 줄였다. 대신 이 변환기는 범용 자동 번역기가 아니다. 새 중국어 문자열이 프로그램의 데이터/식별자인지 검토해야 한다. 비교식·정규식·타입·로그의 중국어는 정상이다. 버전 변경 때 소스 해시 검사는 보수적으로 변경 파일 전체를 표시하며, 문자열 분석만으로 새 데이터 흐름을 증명하지 않는다.
 
@@ -33,16 +35,18 @@ npm ci
 npm run i18n:check
 npm run build
 node ko/smoke.mjs
+node --test scripts/windows-compat.test.mjs
+node scripts/windows-ui-smoke.mjs --korean
 rustup run 1.94.0-x86_64-pc-windows-msvc cargo check --locked --all-targets --manifest-path src-tauri/Cargo.toml
 node ko/build-windows.mjs
 ```
 
-`BROWSER_PATH`로 Chromium 호환 실행 파일을 지정할 수 있다. Windows에서는 Edge/Chrome을 자동 검색한다. `build-windows.mjs`는 자식 프로세스에만 Rust toolchain을 지정하며 전역 기본값을 변경하지 않는다. 검사 스크립트를 우회해 만든 패키지는 한국어 릴리스로 취급하지 않는다.
+`BROWSER_PATH`로 Chromium 호환 실행 파일을 지정할 수 있다. Windows에서는 Edge/Chrome을 자동 검색한다. `build-windows.mjs`는 자식 프로세스에만 Rust toolchain을 지정하며 전역 기본값을 변경하지 않는다. 검사 스크립트를 우회해 만든 패키지는 한국어 릴리스로 취급하지 않는다. 실제 클립보드 왕복 테스트는 기본 무시되며 일회용 GitHub Actions Windows runner에서만 명시적으로 실행한다. 로컬 테스트는 운영 클립보드·계정·프로세스를 변경하지 않는다.
 
 ## upstream 갱신: 중급 워커 실행 순서
 
 1. dirty 변경을 보존하고 `git fetch upstream --tags`한다. 릴리스의 실제 commit/version을 확인한다. 원본 README의 최신 표기나 `main` 위치만 믿지 않는다.
-2. `git switch -c sync/<선택한 버전>` 후 이전 `upstream.json.commit`부터 선택한 commit까지의 diff만 검토한다. 기능은 upstream 우선이다. 한국어 때문에 기능 충돌을 독자 해결하거나 코드를 정리하지 않는다.
+2. `git switch -c sync/<선택한 버전>` 후 이전 `upstream.json.commit`부터 선택한 commit까지의 diff만 검토한다. 기능은 upstream 우선이다. 제출한 호환성 PR의 병합 여부와 동등한 수정의 존재를 확인해 중복 패치를 제거한다. 한국어 때문에 기능 충돌을 독자 해결하거나 코드를 정리하지 않는다.
 3. 선택한 commit을 merge한다. `npm ci` 후 `npm run i18n:audit`에서 보고한 원문/표시 위치를 처리한다. 내부 값이면 보호 규칙과 표시 지점을 함께 등록하고 회귀 테스트를 추가한다. Rust 변경은 사용자 노출 경로만 사전에 추가한다.
 4. 없어진 사전 항목·표시 규칙은 삭제한다. 원문 수정은 새 키로 번역한다. `{n}` 자리표시자의 번호와 개수는 유지하되 한국어 어순으로 재배치할 수 있다. 비어 있는 번역·추측성 ignore는 금지한다.
 5. 변경 파일의 데이터 흐름을 확인한 뒤에만 `node ko/review.mjs --accept`한다. 이 파일은 현재 검토 상태 하나만 보관한다. CI나 업데이트 스크립트에서 무조건 재생성하지 않는다.

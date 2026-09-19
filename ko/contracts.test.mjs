@@ -27,6 +27,18 @@ test('referral copy is explicit about recommendation events and localizes eligib
   );
 });
 
+test('clipboard and OAuth diagnostics translate wrappers but preserve exact external data', () => {
+  assert.equal(message('无法启动剪贴板工具: program not found'), '클립보드 도구를 실행할 수 없습니다: program not found');
+  assert.equal(message('state 校验不通过：这个回调链接不属于本次登录流程'), 'state 검증 실패: 이 콜백 링크는 현재 로그인 요청의 링크가 아닙니다');
+  const url = 'https://example.invalid/?state=取消&code=a%26b';
+  assert.equal(message(url), url);
+  const source = fs.readFileSync('src/components/OAuthLink.tsx', 'utf8');
+  const result = transformSource(source, 'src/components/OAuthLink.tsx', read('ko/catalog.json'), read('ko/policy.json'));
+  assert.equal(result.displayCounts.error, 1);
+  assert.match(result.code, /value=\{url\}/);
+  assert.ok(!result.code.includes('__koMessage(url)'));
+});
+
 test('source review detects added, removed and changed files, including reused strings', () => {
   assert.deepEqual(reviewChanges({ 'a.ts': 'before', 'b.rs': 'removed' }, { 'a.ts': 'after', 'c.tsx': 'new' }), [
     'SOURCE_REVIEW a.ts (changed)', 'SOURCE_REVIEW b.rs (removed)', 'SOURCE_REVIEW c.tsx (new)',

@@ -1,3 +1,4 @@
+import baseline from './upstream.json' with { type: 'json' };
 // Imported only by the isolated browser smoke server, never the app build.
 const now = Math.floor(Date.now() / 1000);
 const quota = {
@@ -25,7 +26,7 @@ const settings = {
 };
 const responses = {
   get_accounts: [account], get_current_account_id: account.id, get_settings: settings,
-  get_quota_by_id: quota, get_proxy_status: { running: false, port: 18080, allow_lan: false, total_requests: 0, active_connections: 0, current_account: account.name },
+  get_quota_by_id: quota, get_proxy_status: { is_running: false, port: 18080, allow_lan: false, total_requests: 0, active_connections: 0, current_account: account.name },
   get_sync_status: { is_synced: true, disk_email: account.name, matching_id: account.id, current_id: account.id },
   check_sync_conflict: null, check_codex_login: false,
   get_codex_fast_mode: false, get_codex_features_goals: false,
@@ -45,7 +46,7 @@ export async function invoke(command) {
   }
   return structuredClone(responses[command]);
 }
-export const getVersion = async () => '0.7.16-ko.2';
+export const getVersion = async () => baseline.koreanVersion;
 export const listen = async () => () => {};
 export const emit = async () => {};
 export const getCurrentWebviewWindow = () => ({
