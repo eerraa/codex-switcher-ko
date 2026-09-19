@@ -3,6 +3,7 @@ import { Zap, RefreshCw, ArrowLeftRight, Trash2, Clock, UploadCloud, Plus, Gauge
 import { Account, AppSettings, LunaReserveWindow, RelayUsageCache, SparkWindows, effectiveKind } from '../hooks/useAccounts';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { isMacOS } from '../platform';
 import { AntigravityQuota, type AntigravityModelQuota } from './AntigravityQuota';
 import { AgyRelayModelQuotas, RelayQuotaWindows } from './RelayQuotaWindows';
 import { relayCurrentState } from '../utils/relayCurrent';
@@ -284,9 +285,11 @@ export function AccountList({
     };
 
     const handleCopy = (id: string, text: string) => {
-        navigator.clipboard.writeText(text).then(() => {
+        invoke('copy_to_clipboard', { text }).then(() => {
             setCopiedId(id);
             setTimeout(() => setCopiedId(null), 2000);
+        }).catch(error => {
+            setPushToast({ type: 'error', text: String(error) });
         });
     };
 
@@ -842,11 +845,13 @@ export function AccountList({
                 </div>
                 <div className="toolbar-spacer" />
                 <button
-                    className={`toolbar-icon-btn ${autoReload ? 'active-reload' : ''}`}
+                    className={`toolbar-icon-btn ${isMacOS && autoReload ? 'active-reload' : ''}`}
                     onClick={() => setAutoReload(!autoReload)}
-                    title={autoReload ? '关闭自动重载 IDE' : '开启自动重载 IDE'}
+                    disabled={!isMacOS}
+                    aria-pressed={isMacOS && autoReload}
+                    title={!isMacOS ? 'IDE 自动重载仅支持 macOS，请手动重载 IDE' : autoReload ? '关闭自动重载 IDE' : '开启自动重载 IDE'}
                 >
-                    <Zap size={16} fill={autoReload ? "currentColor" : "none"} />
+                    <Zap size={16} fill={isMacOS && autoReload ? "currentColor" : "none"} />
                 </button>
                 {onAddAccount && (
                     <button
@@ -950,7 +955,7 @@ export function AccountList({
                                 <div className="col-checkbox">
                                     <input type="checkbox" className="custom-checkbox" checked={selectedIds.has(acc.id)} onChange={() => { const s = new Set(selectedIds); s.has(acc.id) ? s.delete(acc.id) : s.add(acc.id); setSelectedIds(s); }} />
                                 </div>
-                                <div className="col-drag"><span className="drag-handle">⋮⋮</span></div>
+                                <div className="col-drag"><span className="drag-handle" aria-hidden="true">⋮⋮</span></div>
                                 <div className="col-email" title="点击复制账号">
                                     {(() => {
                                         const isRelay = effectiveKind(acc) === 'relay';

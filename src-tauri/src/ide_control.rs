@@ -11,6 +11,9 @@ const IDE_CONFIGS: &[(&str, &str)] = &[
 
 /// 检测运行中的 IDE
 pub fn detect_running_ides() -> Vec<String> {
+    if !cfg!(target_os = "macos") {
+        return Vec::new();
+    }
     let mut running = Vec::new();
 
     for &(name, bundle_id) in IDE_CONFIGS {
@@ -38,6 +41,9 @@ pub fn detect_running_ides() -> Vec<String> {
 
 /// 重载指定 IDE
 pub fn reload_ide(name: &str, use_window_reload: bool) -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Err("IDE 自动重载仅支持 macOS，请手动重载 IDE".into());
+    }
     // 杀死所有 codex 进程（排除 Codex Switcher 自身）
     let script = r#"
         for pid in $(pgrep -f codex 2>/dev/null); do
@@ -108,6 +114,9 @@ pub fn reload_ide(name: &str, use_window_reload: bool) -> Result<(), String> {
 
 /// 移除 Codex App 的隔离属性 (修复闪退)
 pub fn remove_quarantine() -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Err("隔离属性修复仅适用于 macOS".into());
+    }
     let script = r#"
     do shell script "xattr -dr com.apple.quarantine /Applications/Codex.app" with administrator privileges
     "#;

@@ -6,9 +6,11 @@ pub mod account;
 mod antigravity;
 mod bulk_import;
 pub mod chat_inbound;
+mod clipboard;
 mod codex_sessions;
 mod codex_ua;
 mod deep_link;
+mod desktop;
 mod ide_control;
 pub mod kimi_quota;
 pub mod mailbox;
@@ -34,6 +36,7 @@ mod sse_watchdog;
 mod switch_log;
 mod token_tracker;
 mod tray;
+mod tray_position;
 mod usage;
 
 use account::{Account, AccountStore};
@@ -3705,6 +3708,9 @@ async fn consume_reset_credit(
 /// 一次性号可不管。
 #[tauri::command]
 fn open_codex_terminal(state: State<AppState>, id: String) -> Result<String, String> {
+    if !cfg!(any(windows, target_os = "macos")) {
+        return Err("当前平台不支持自动打开 Codex 终端".into());
+    }
     let (auth_json, name) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let acc = store
@@ -3751,27 +3757,36 @@ fn open_codex_terminal(state: State<AppState>, id: String) -> Result<String, Str
     std::fs::write(home.join("config.toml"), config)
         .map_err(|e| format!("写 config.toml 失败: {}", e))?;
 
-    // 开 Terminal.app 跑 codex（登录 shell 有 PATH，能找到 codex）
-    let home_str = home
-        .to_string_lossy()
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"");
-    let inner = format!(
+    #[cfg(windows)]
+    {
+        crate::desktop::open_codex_terminal(&home)?;
+        return Ok(format!("已为 {} 打开 codex 终端", name));
+    }
+
+    #[cfg(not(windows))]
+    {
+        // 开 Terminal.app 跑 codex（登录 shell 有 PATH，能找到 codex）
+        let home_str = home
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let inner = format!(
         "export CODEX_HOME=\\\"{}\\\"; clear; echo '账号: {} — 在下面直接发一句 你好 即可触发 referral 兑现'; codex",
         home_str,
         name.replace('\'', "")
     );
-    let script = format!(
-        "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
-        inner
-    );
-    Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .spawn()
-        .map_err(|e| format!("打开 Terminal 失败: {}", e))?;
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+            inner
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("打开 Terminal 失败: {}", e))?;
 
-    Ok(format!("已为 {} 打开 codex 终端", name))
+        Ok(format!("已为 {} 打开 codex 终端", name))
+    }
 }
 
 /// 将当前 Codex auth.json 强制同步到指定账号
@@ -4087,6 +4102,9 @@ async fn fix_codex_quarantine(
 /// 重载 IDE 窗口
 #[tauri::command]
 async fn reload_ide_windows(use_window_reload: bool) -> Result<Vec<String>, String> {
+    if !cfg!(target_os = "macos") {
+        return Err("IDE 自动重载仅支持 macOS，请手动重载 IDE".into());
+    }
     let ides = ide_control::detect_running_ides();
     let mut reloaded = Vec::new();
 
@@ -5041,8 +5059,14 @@ fn show_main_window_cmd(app: tauri::AppHandle) {
 
 /// 杀死所有 codex 相关进程（排除 Codex Switcher 自身）
 #[tauri::command]
-fn kill_codex_processes() -> Result<String, String> {
-    let script = r#"
+async fn kill_codex_processes() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        return crate::desktop::terminate_codex().await;
+    }
+    #[cfg(not(windows))]
+    {
+        let script = r#"
         killed=0
         for pid in $(pgrep -f codex 2>/dev/null); do
             cmd=$(ps -p "$pid" -o command= 2>/dev/null || true)
@@ -5054,86 +5078,98 @@ fn kill_codex_processes() -> Result<String, String> {
         echo "$killed"
     "#;
 
-    let output = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(script)
-        .output()
-        .map_err(|e| format!("执行失败: {}", e))?;
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .map_err(|e| format!("执行失败: {}", e))?;
 
-    let count = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let n: i32 = count.parse().unwrap_or(0);
+        let count = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let n: i32 = count.parse().unwrap_or(0);
 
-    if n > 0 {
-        Ok(format!("已终止 {} 个 codex 进程", n))
-    } else {
-        Ok("未找到运行中的 codex 进程".to_string())
+        if n > 0 {
+            Ok(format!("已终止 {} 个 codex 进程", n))
+        } else {
+            Ok("未找到运行中的 codex 进程".to_string())
+        }
     }
 }
 
 /// 设置 OPENAI_BASE_URL 环境变量（终端 + GUI 应用全覆盖）
 #[tauri::command]
 fn set_proxy_env(port: u16, enable: bool) -> Result<String, String> {
-    let home = dirs::home_dir().ok_or("无法获取用户目录")?;
-    let env_value = format!("http://localhost:{}/v1", port);
-    let env_line = format!("export OPENAI_BASE_URL={}", env_value);
-    let marker = "# codex-switcher-proxy";
-    let mut results = Vec::new();
-
-    // ── 1. 终端：写入 .zshrc / .bashrc ──
-    for rc_name in &[".zshrc", ".bashrc"] {
-        let rc_path = home.join(rc_name);
-        if !rc_path.exists() {
-            continue;
-        }
-        let content = std::fs::read_to_string(&rc_path)
-            .map_err(|e| format!("读取 {} 失败: {}", rc_name, e))?;
-
-        let cleaned: Vec<&str> = content
-            .lines()
-            .filter(|line| !line.contains(marker))
-            .collect();
-        let mut new_content = cleaned.join("\n");
-
-        if enable {
-            if !new_content.ends_with('\n') {
-                new_content.push('\n');
-            }
-            new_content.push_str(&format!("{} {}\n", env_line, marker));
-        }
-
-        std::fs::write(&rc_path, &new_content)
-            .map_err(|e| format!("写入 {} 失败: {}", rc_name, e))?;
-        results.push(rc_name.to_string());
-    }
-
-    // ── 2. GUI 应用：launchctl setenv（Codex App 重启后生效）──
-    #[cfg(target_os = "macos")]
+    #[cfg(windows)]
     {
-        if enable {
-            let _ = std::process::Command::new("launchctl")
-                .args(["setenv", "OPENAI_BASE_URL", &env_value])
-                .output();
-            results.push("launchctl".to_string());
-        } else {
-            let _ = std::process::Command::new("launchctl")
-                .args(["unsetenv", "OPENAI_BASE_URL"])
-                .output();
-            results.push("launchctl".to_string());
+        let url = format!("http://localhost:{}/v1", port);
+        set_codex_config_base_url(if enable { Some(&url) } else { None })?;
+        return Ok(
+            "Codex 配置已更新。请重启 Codex CLI / App；未修改 Windows 系统环境变量。".into(),
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        let home = dirs::home_dir().ok_or("无法获取用户目录")?;
+        let env_value = format!("http://localhost:{}/v1", port);
+        let env_line = format!("export OPENAI_BASE_URL={}", env_value);
+        let marker = "# codex-switcher-proxy";
+        let mut results = Vec::new();
+
+        // ── 1. 终端：写入 .zshrc / .bashrc ──
+        for rc_name in &[".zshrc", ".bashrc"] {
+            let rc_path = home.join(rc_name);
+            if !rc_path.exists() {
+                continue;
+            }
+            let content = std::fs::read_to_string(&rc_path)
+                .map_err(|e| format!("读取 {} 失败: {}", rc_name, e))?;
+
+            let cleaned: Vec<&str> = content
+                .lines()
+                .filter(|line| !line.contains(marker))
+                .collect();
+            let mut new_content = cleaned.join("\n");
+
+            if enable {
+                if !new_content.ends_with('\n') {
+                    new_content.push('\n');
+                }
+                new_content.push_str(&format!("{} {}\n", env_line, marker));
+            }
+
+            std::fs::write(&rc_path, &new_content)
+                .map_err(|e| format!("写入 {} 失败: {}", rc_name, e))?;
+            results.push(rc_name.to_string());
         }
-    }
 
-    // ── 3. Codex App config.toml：写入 openai_base_url ──
-    match set_codex_config_base_url(if enable { Some(&env_value) } else { None }) {
-        Ok(_) => results.push("config.toml".to_string()),
-        Err(e) => results.push(format!("config.toml(失败: {})", e)),
-    }
+        // ── 2. GUI 应用：launchctl setenv（Codex App 重启后生效）──
+        #[cfg(target_os = "macos")]
+        {
+            if enable {
+                let _ = std::process::Command::new("launchctl")
+                    .args(["setenv", "OPENAI_BASE_URL", &env_value])
+                    .output();
+                results.push("launchctl".to_string());
+            } else {
+                let _ = std::process::Command::new("launchctl")
+                    .args(["unsetenv", "OPENAI_BASE_URL"])
+                    .output();
+                results.push("launchctl".to_string());
+            }
+        }
 
-    let status = if enable { "已设置" } else { "已移除" };
-    Ok(format!(
-        "{} OPENAI_BASE_URL ({})。\n终端：新窗口生效\nCodex App：重启后生效",
-        status,
-        results.join(", ")
-    ))
+        // ── 3. Codex App config.toml：写入 openai_base_url ──
+        match set_codex_config_base_url(if enable { Some(&env_value) } else { None }) {
+            Ok(_) => results.push("config.toml".to_string()),
+            Err(e) => results.push(format!("config.toml(失败: {})", e)),
+        }
+
+        let status = if enable { "已设置" } else { "已移除" };
+        Ok(format!(
+            "{} OPENAI_BASE_URL ({})。\n终端：新窗口生效\nCodex App：重启后生效",
+            status,
+            results.join(", ")
+        ))
+    }
 }
 
 /// 读写 ~/.codex/config.toml 的 openai_base_url 字段
@@ -5147,6 +5183,9 @@ fn set_codex_config_base_url(url: Option<&str>) -> Result<(), String> {
         if url.is_some() {
             // 文件不存在，创建并写入
             let content = format!("openai_base_url = \"{}\"\n", url.unwrap());
+            if let Some(parent) = config_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
+            }
             std::fs::write(&config_path, content)
                 .map_err(|e| format!("创建 config.toml 失败: {}", e))?;
         }

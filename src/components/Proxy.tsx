@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Copy, Check, Save } from 'lucide-react';
 import './Proxy.css';
+import { codexLaunchCommand, isMacOS, isWindows } from '../platform';
 
 interface ProxyStatus {
     enabled: boolean;
@@ -128,7 +129,7 @@ export function Proxy() {
         setMessage(null);
         try {
             const result = await invoke<string>('set_proxy_env', { port, enable });
-            setMessage({ type: 'success', text: result + '（新终端窗口生效）' });
+            setMessage({ type: 'success', text: isWindows ? result : result + '（新终端窗口生效）' });
             setTimeout(() => setMessage(null), 5000);
         } catch (e) {
             setMessage({ type: 'error', text: `${e}` });
@@ -147,6 +148,17 @@ export function Proxy() {
             setMessage({ type: 'error', text: `${e}` });
         } finally {
             setKilling(false);
+        }
+    };
+
+    const copyLaunchCommand = async (baseUrl: string) => {
+        try {
+            await invoke('copy_to_clipboard', { text: codexLaunchCommand(baseUrl) });
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (error) {
+            setCopied(false);
+            setMessage({ type: 'error', text: String(error) });
         }
     };
 
@@ -265,19 +277,13 @@ export function Proxy() {
                 <div className="setting-item">
                     <div className="setting-info">
                         <span className="setting-label">手动启动</span>
-                        <span className="setting-desc">复制命令到终端运行</span>
+                        <span className="setting-desc">{isWindows ? '复制命令到 PowerShell 运行' : '复制命令到终端运行'}</span>
                     </div>
                     <button
                         className="copy-command-button"
-                        onClick={() => {
-                            navigator.clipboard.writeText(
-                                `OPENAI_BASE_URL=${status?.base_url ?? `http://localhost:${port}/v1`} codex`
-                            );
-                            setCopied(true);
-                            setTimeout(() => setCopied(false), 2000);
-                        }}
+                        onClick={() => void copyLaunchCommand(status?.base_url ?? `http://localhost:${port}/v1`)}
                     >
-                        <code>OPENAI_BASE_URL={status?.base_url ?? `http://localhost:${port}/v1`} codex</code>
+                        <code>{codexLaunchCommand(status?.base_url ?? `http://localhost:${port}/v1`)}</code>
                         {copied ? <Check size={12} /> : <Copy size={12} />}
                     </button>
                 </div>
@@ -290,15 +296,9 @@ export function Proxy() {
                         </div>
                         <button
                             className="copy-command-button"
-                            onClick={() => {
-                                navigator.clipboard.writeText(
-                                    `OPENAI_BASE_URL=${status.lan_base_url} codex`
-                                );
-                                setCopied(true);
-                                setTimeout(() => setCopied(false), 2000);
-                            }}
+                            onClick={() => void copyLaunchCommand(status.lan_base_url!)}
                         >
-                            <code>OPENAI_BASE_URL={status.lan_base_url} codex</code>
+                            <code>{codexLaunchCommand(status.lan_base_url)}</code>
                             {copied ? <Check size={12} /> : <Copy size={12} />}
                         </button>
                     </div>
@@ -306,9 +306,9 @@ export function Proxy() {
 
                 <div className="setting-item">
                     <div className="setting-info">
-                        <span className="setting-label">全局代理（CLI + App 全覆盖）</span>
+                        <span className="setting-label">{isWindows ? 'Codex 代理配置（CLI + App）' : '全局代理（CLI + App 全覆盖）'}</span>
                         <span className="setting-desc">
-                            同时写入 ~/.zshrc、launchctl 和 ~/.codex/config.toml，终端 CLI 和 Codex App 均走代理
+                            {isWindows ? '写入 ~/.codex/config.toml，重启 Codex CLI / App 后生效；不修改 Windows 系统环境变量。' : '同时写入 ~/.zshrc、launchctl 和 ~/.codex/config.toml，终端 CLI 和 Codex App 均走代理'}
                         </span>
                     </div>
                     <div className="env-btn-group">
@@ -317,7 +317,7 @@ export function Proxy() {
                             onClick={() => handleSetEnv(true)}
                             disabled={envWriting}
                         >
-                            {envWriting ? '...' : '写入环境变量'}
+                            {envWriting ? '...' : isWindows ? '写入 Codex 配置' : '写入环境变量'}
                         </button>
                         <button
                             className="btn btn-sm btn-ghost"
@@ -412,7 +412,8 @@ export function Proxy() {
                     <label className="toggle">
                         <input
                             type="checkbox"
-                            checked={settings?.notify_on_switch ?? false}
+                            checked={isMacOS && (settings?.notify_on_switch ?? false)}
+                            disabled={!isMacOS}
                             onChange={async e => {
                                 if (!settings) return;
                                 const updated = { ...settings, notify_on_switch: e.target.checked };

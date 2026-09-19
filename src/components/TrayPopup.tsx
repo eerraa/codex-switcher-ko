@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 // Rust 端 on_window_event(Focused(false)) 负责隐藏弹窗
 import './TrayPopup.css';
 
@@ -63,13 +62,15 @@ function formatTokens(n: number): string {
     return n.toString();
 }
 
-function statusClass(pct: number): string {
+function statusClass(pct: number | null): string {
+    if (pct === null || !Number.isFinite(pct)) return 'unknown';
     if (pct > 50) return 'healthy';
     if (pct > 10) return 'warning';
     return 'critical';
 }
 
-function statusLabel(pct: number): string {
+function statusLabel(pct: number | null): string {
+    if (pct === null || !Number.isFinite(pct)) return 'UNKNOWN';
     if (pct > 50) return 'HEALTHY';
     if (pct > 10) return 'WARNING';
     return 'CRITICAL';
@@ -78,6 +79,7 @@ function statusLabel(pct: number): string {
 export function TrayPopup() {
     const [data, setData] = useState<TrayData | null>(null);
     const [switching, setSwitching] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     const fetchData = async () => {
         try {
@@ -107,8 +109,9 @@ export function TrayPopup() {
                     ? { name: anchorAcc.name, is_current: anchorAcc.id === currentId }
                     : null,
             });
+            setLoadError(null);
         } catch (e) {
-            console.error('Failed to fetch tray data:', e);
+            setLoadError(String(e));
         }
     };
 
@@ -118,12 +121,13 @@ export function TrayPopup() {
         fetchData();
         const interval = setInterval(fetchData, 5000);
         const unsub = listen('accounts-updated', fetchData);
+        void unsub.catch(error => setLoadError(String(error)));
 
         // 焦点丢失由 Rust 端 on_window_event 处理
 
         return () => {
             clearInterval(interval);
-            unsub.then(fn => fn());
+            void unsub.then(fn => fn()).catch(console.error);
             document.documentElement.classList.remove('is-tray-popup');
             document.body.classList.remove('is-tray-popup');
         };
@@ -161,12 +165,11 @@ export function TrayPopup() {
 
     const handleOpenDashboard = async () => {
         await invoke('show_main_window_cmd');
-        getCurrentWebviewWindow().hide();
     };
 
     const q = data?.account?.cached_quota;
-    const fiveH = q?.five_hour_left ?? 0;
-    const weekly = q?.weekly_left ?? 0;
+    const fiveH = q?.five_hour_left ?? null;
+    const weekly = q?.weekly_left ?? null;
 
     return (
         <div className="tray-popup">
@@ -211,6 +214,8 @@ export function TrayPopup() {
                 </div>
             )}
 
+            {loadError && <div className="tp-error" role="alert">{loadError}</div>}
+
             {/* Quota Cards */}
             <div className="tp-cards">
                 <div className={`tp-card ${statusClass(fiveH)}`}>
@@ -220,11 +225,11 @@ export function TrayPopup() {
                         <span className={`tp-status ${statusClass(fiveH)}`}>{statusLabel(fiveH)}</span>
                     </div>
                     <div className="tp-card-value">
-                        {q ? Math.round(fiveH) : '-'}<span className="tp-unit">%</span>
+                        {q ? Math.round(fiveH ?? 0) : '-'}<span className="tp-unit">%</span>
                         <span className="tp-remaining">Remaining</span>
                     </div>
                     <div className="tp-progress">
-                        <div className={`tp-progress-bar ${statusClass(fiveH)}`} style={{ width: `${fiveH}%` }} />
+                        <div className={`tp-progress-bar ${statusClass(fiveH)}`} style={{ width: `${fiveH ?? 0}%` }} />
                     </div>
                     <div className="tp-reset">
                         Resets in {q ? formatCountdown(q.five_hour_reset_at) : '-'}
@@ -238,11 +243,11 @@ export function TrayPopup() {
                         <span className={`tp-status ${statusClass(weekly)}`}>{statusLabel(weekly)}</span>
                     </div>
                     <div className="tp-card-value">
-                        {q ? Math.round(weekly) : '-'}<span className="tp-unit">%</span>
+                        {q ? Math.round(weekly ?? 0) : '-'}<span className="tp-unit">%</span>
                         <span className="tp-remaining">Remaining</span>
                     </div>
                     <div className="tp-progress">
-                        <div className={`tp-progress-bar ${statusClass(weekly)}`} style={{ width: `${weekly}%` }} />
+                        <div className={`tp-progress-bar ${statusClass(weekly)}`} style={{ width: `${weekly ?? 0}%` }} />
                     </div>
                     <div className="tp-reset">
                         Resets in {q ? formatCountdown(q.weekly_reset_at) : '-'}
