@@ -45,7 +45,7 @@ export async function invoke(command) {
   }
   return structuredClone(responses[command]);
 }
-export const getVersion = async () => '0.7.16-ko.1';
+export const getVersion = async () => '0.7.16-ko.2';
 export const listen = async () => () => {};
 export const emit = async () => {};
 export const getCurrentWebviewWindow = () => ({

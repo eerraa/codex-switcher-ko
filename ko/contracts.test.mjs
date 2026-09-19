@@ -16,6 +16,17 @@ test('release metadata has one upstream version and one Korean patch version', (
   assert.match(base.koreanVersion, /^\d+\.\d+\.\d+-ko\.\d+$/);
 });
 
+test('referral copy is explicit about recommendation events and localizes eligibility failures', () => {
+  const frontend = read('ko/catalog.json');
+  assert.equal(frontend['邀请额度'], '추천 초대');
+  assert.equal(frontend['工作区活动'], '워크스페이스 추천 이벤트');
+  assert.equal(frontend['邀请同事使用 ChatGPT 桌面版'], 'ChatGPT 추천 초대 · 워크스페이스');
+  assert.equal(
+    message('邀请接口返回 HTTP 403 非 JSON 响应，可能需要官方桌面版登录会话；无法确认活动资格'),
+    '추천 초대 자격을 확인할 수 없습니다. 서버가 HTTP 403 상태로 JSON이 아닌 응답을 반환했습니다. 공식 ChatGPT 데스크톱 로그인 세션이 필요할 수 있습니다',
+  );
+});
+
 test('source review detects added, removed and changed files, including reused strings', () => {
   assert.deepEqual(reviewChanges({ 'a.ts': 'before', 'b.rs': 'removed' }, { 'a.ts': 'after', 'c.tsx': 'new' }), [
     'SOURCE_REVIEW a.ts (changed)', 'SOURCE_REVIEW b.rs (removed)', 'SOURCE_REVIEW c.tsx (new)',
