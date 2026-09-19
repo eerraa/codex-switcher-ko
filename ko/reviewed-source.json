@@ -43,7 +43,7 @@
   "src-tauri/src/antigravity/translate.rs": "96f4fd97d6cdb5fe4e690c5cf6ec9995f595fc2c1f3164efe7a572d16176f3a4",
   "src-tauri/src/bulk_import.rs": "4afb4ce71e5c613d4be30f0ab078e4d081917e1c4bdfcc0d97de25f151b46f89",
   "src-tauri/src/chat_inbound.rs": "4c2ca5484c72b52cf4827474d7d5b9b861c089b28432cc9480391ecf3c9d7ee9",
-  "src-tauri/src/clipboard.rs": "675906f9b0078984418e648da9868f1207294e77e42cab9c9a6e81c81b992e3f",
+  "src-tauri/src/clipboard.rs": "cae8fc575df82df1584a53765785d255658d9519a543ef3e4707bbd2f2cdcf35",
   "src-tauri/src/codex_sessions.rs": "d355ee05fd539a5060b425561c9dd55790a77509e8de900305ea310bcd7d345a",
   "src-tauri/src/codex_ua.rs": "c851873a83dbc6f948e910262bb94a9eaf302a80355b17b01a7b6bbcdd7f075f",
   "src-tauri/src/deep_link.rs": "2bd766c4f09d52a62b098ae816c2bdcd924080019db175ecf79f245fc85cdee7",
