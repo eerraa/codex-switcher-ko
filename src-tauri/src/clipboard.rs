@@ -7,18 +7,22 @@ use tokio::{
 
 #[cfg(any(windows, test))]
 fn windows_text(text: &str) -> Vec<u8> {
-    // clip.exe accepts UTF-16LE with a BOM; never pass text through cmd.exe.
-    std::iter::once(0xfeffu16)
-        .chain(text.encode_utf16())
-        .flat_map(u16::to_le_bytes)
-        .collect()
+    // ASCII transport avoids console-codepage and BOM insertion/removal.
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .encode(text.as_bytes())
+        .into_bytes()
 }
 
 pub async fn write_text(text: &str) -> Result<(), String> {
     #[cfg(windows)]
     let (mut command, input) = {
         let root = std::env::var_os("SystemRoot").ok_or("无法定位 Windows 系统目录")?;
-        let mut command = Command::new(std::path::PathBuf::from(root).join("System32/clip.exe"));
+        let mut command = Command::new(
+            std::path::PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+        );
+        command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command",
+            "$ErrorActionPreference='Stop'; $text=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())); Set-Clipboard -Value $text"]);
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
         (command, windows_text(text))
     };
@@ -43,7 +47,8 @@ pub async fn write_text(text: &str) -> Result<(), String> {
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("无法启动剪贴板工具: {}", e))?;
-    let result = timeout(Duration::from_secs(5), async {
+    let seconds = if cfg!(windows) { 20 } else { 5 };
+    let result = timeout(Duration::from_secs(seconds), async {
         let mut stdin = child.stdin.take().ok_or("剪贴板输入不可写")?;
         stdin
             .write_all(&input)
@@ -79,19 +84,24 @@ mod tests {
 
     #[test]
     fn windows_clipboard_preserves_unicode_url_and_shell_metacharacters() {
-        let text = "한글 😀 https://example.invalid/?code=a&state=b%20c\r\n'$();<>|!";
-        let bytes = windows_text(text);
-        assert_eq!(&bytes[..2], &[0xff, 0xfe]);
-        let units: Vec<_> = bytes[2..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
-        assert_eq!(String::from_utf16(&units).unwrap(), text);
+        use base64::Engine;
+        for text in [
+            "한글 😀 https://example.invalid/?code=a&state=b%20c\r\n'$();<>|!",
+            "\u{feff}preserve intentional BOM",
+            "",
+        ] {
+            let bytes = windows_text(text);
+            assert!(bytes.is_ascii());
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(bytes)
+                .unwrap();
+            assert_eq!(String::from_utf8(decoded).unwrap(), text);
+        }
     }
 
     #[test]
-    fn empty_clipboard_payload_has_only_bom() {
-        assert_eq!(windows_text(""), vec![0xff, 0xfe]);
+    fn empty_clipboard_payload_is_empty() {
+        assert!(windows_text("").is_empty());
     }
 
     #[cfg(windows)]
@@ -103,15 +113,25 @@ mod tests {
             Ok("1")
         );
         assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
-        let text = "한글 😀 https://example.invalid/authorize?code=a&state=b%20c\r\n'$();<>|!";
-        super::write_text(text).await.unwrap();
-        let root = std::env::var_os("SystemRoot").unwrap();
-        let output = tokio::process::Command::new(std::path::PathBuf::from(root)
+        let long_url = format!(
+            "https://example.invalid/authorize?state={}&extra=%25%26%22%3C",
+            "a".repeat(1800)
+        );
+        for text in [
+            "한글 😀 https://example.invalid/authorize?code=a&state=b%20c\r\n'$();<>|!",
+            "\u{feff}preserve intentional BOM",
+            long_url.as_str(),
+            "",
+        ] {
+            super::write_text(text).await.unwrap();
+            let root = std::env::var_os("SystemRoot").unwrap();
+            let output = tokio::process::Command::new(std::path::PathBuf::from(root)
             .join("System32/WindowsPowerShell/v1.0/powershell.exe"))
             .args(["-NoProfile", "-NonInteractive", "-STA", "-Command",
                 "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); [Console]::Write((Get-Clipboard -Raw))"])
             .output().await.unwrap();
-        assert!(output.status.success());
-        assert_eq!(String::from_utf8(output.stdout).unwrap(), text);
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8(output.stdout).unwrap(), text);
+        }
     }
 }
