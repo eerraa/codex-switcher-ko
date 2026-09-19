@@ -22,7 +22,7 @@ pub async fn write_text(text: &str) -> Result<(), String> {
             std::path::PathBuf::from(root).join("System32/WindowsPowerShell/v1.0/powershell.exe"),
         );
         command.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command",
-            "$ErrorActionPreference='Stop'; $text=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())); Set-Clipboard -Value $text"]);
+            "$ErrorActionPreference='Stop'; $text=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())); Add-Type -AssemblyName System.Windows.Forms; if ($text.Length -eq 0) { [Windows.Forms.Clipboard]::Clear() } else { [Windows.Forms.Clipboard]::SetText($text, [Windows.Forms.TextDataFormat]::UnicodeText) }"]);
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
         (command, windows_text(text))
     };
@@ -43,7 +43,11 @@ pub async fn write_text(text: &str) -> Result<(), String> {
     let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(if cfg!(test) {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        })
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("无法启动剪贴板工具: {}", e))?;
@@ -117,13 +121,19 @@ mod tests {
             "https://example.invalid/authorize?state={}&extra=%25%26%22%3C",
             "a".repeat(1800)
         );
-        for text in [
+        for (index, text) in [
             "한글 😀 https://example.invalid/authorize?code=a&state=b%20c\r\n'$();<>|!",
             "\u{feff}preserve intentional BOM",
             long_url.as_str(),
             "",
-        ] {
-            super::write_text(text).await.unwrap();
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            println!("clipboard roundtrip case {}", index);
+            super::write_text(text)
+                .await
+                .unwrap_or_else(|error| panic!("case {} write failed: {}", index, error));
             let root = std::env::var_os("SystemRoot").unwrap();
             let output = tokio::process::Command::new(std::path::PathBuf::from(root)
             .join("System32/WindowsPowerShell/v1.0/powershell.exe"))
