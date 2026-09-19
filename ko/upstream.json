@@ -3,5 +3,20 @@
   "tag": "v0.7.16",
   "commit": "7a3495eb7e2fd7ee04e688d171f07743fe0ec76b",
   "koreanVersion": "0.7.16-ko.3",
-  "compatibilityPR": "https://github.com/VallierDev/codex-switcher/pull/16"
+  "compatibilityPRBase": "f64a44a81b9ae8354d76bcdff0e77ab23c8790e1",
+  "compatibilityPRs": {
+    "windows-clipboard": "https://github.com/VallierDev/codex-switcher/pull/16",
+    "oauth-link-fallback": "https://github.com/VallierDev/codex-switcher/pull/17",
+    "tray-work-area": "https://github.com/VallierDev/codex-switcher/pull/18",
+    "macos-action-guards": "https://github.com/VallierDev/codex-switcher/pull/19",
+    "windows-cli-commands": "https://github.com/VallierDev/codex-switcher/pull/20",
+    "windows-import-filename": "https://github.com/VallierDev/codex-switcher/pull/21"
+  },
+  "compatibilityArchive": "origin/archive/windows-compat-16",
+  "compatibilityDeferred": [
+    "Linux clipboard helpers and non-OAuth clipboard migration",
+    "Windows terminal launch and process termination",
+    "Proxy configuration write behavior and parent-directory creation",
+    "Generic tray UNKNOWN/error presentation and decorative grip cursor"
+  ]
 }

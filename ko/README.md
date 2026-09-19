@@ -2,9 +2,11 @@
 
 ## 기준과 범위
 
-정본 버전은 `upstream.json`이다. 현재 별도 적용한 호환성 PR은 같은 파일의 `compatibilityPR`로 추적한다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 최신 릴리스 태그가 `upstream/main`보다 앞설 수 있으므로 버전명과 실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
+정본 버전은 `upstream.json`이다. 호환성 제출 목록은 같은 파일의 `compatibilityPRs`, 분리 기준은 `compatibilityPRBase`로 추적한다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 최신 릴리스 태그가 `upstream/main`보다 앞설 수 있으므로 버전명과 실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
 
-한국어 표시·번역 검사·Windows 패키징과 upstream 제출용 플랫폼 호환성 패치만 유지한다. 호환성 변경은 한국어 커밋과 분리하고 upstream 수용 시 중복을 제거한다. 계정·인증·라우팅 알고리즘, 사용자 데이터 스키마, 별명 등 독자 기능은 변경하지 않는다. 새 의존성은 없다. 번역 자체는 `src/`를 재작성하지 않는 빌드 레이어이며, 기능 소스 차이는 검토된 플랫폼 경계와 원래 트레이 번역에 한정한다.
+한국어 표시·번역 검사·Windows 패키징과 upstream 제출용 플랫폼 호환성 패치만 유지한다. 호환성 변경은 한국어 커밋과 분리하고 upstream 수용 시 중복을 제거한다. 계정·인증·라우팅 알고리즘, 사용자 데이터 스키마, 별명 등 독자 기능은 변경하지 않는다. 추가 npm/Cargo 패키지는 없다. 번역 자체는 `src/`를 재작성하지 않는 빌드 레이어이며, 기능 소스 차이는 검토된 플랫폼 경계와 원래 트레이 번역에 한정한다.
+
+분리 PR은 각각 upstream 기준의 단일 커밋이며 서로 선행 병합을 요구하지 않는다. `compatibilityDeferred`는 현재 ko.3 구현에 남아 있지만 upstream 제출에서는 보류한 범위다. 기존 통합 구현은 `compatibilityArchive`에 보존한다. PR 분리만으로 한국어판 실행 코드·버전·설치 파일을 변경하지 않는다. 동기화 시 수용된 PR과 실제 source를 대조하여 중복만 제거한다.
 
 ## 구조: 원본 보존형 빌드 레이어
 
