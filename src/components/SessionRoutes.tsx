@@ -111,11 +111,11 @@ export function SessionRoutes() {
 
     const handleCopySid = async (route: SessionRoute) => {
         try {
-            await navigator.clipboard.writeText(route.session_id);
+            await invoke('copy_to_clipboard', { text: route.session_id });
             setCopiedId(route.id);
             setTimeout(() => setCopiedId((cur) => (cur === route.id ? null : cur)), 1500);
         } catch (e) {
-            console.error('copy failed', e);
+            setError(String(e));
         }
     };
 
