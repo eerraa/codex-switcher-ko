@@ -1,68 +1,35 @@
-# Google / Antigravity 与 CPA 链路对照
+# Google / Antigravity 与 CPA 兼容约束
 
-核对日期：2026-09-03。CPA 固定参考提交：`17a65ee5470fbaf0e22fc219381e6a4ae9e07624`。
+Genre: contract
+Canonical for: Google / Antigravity Responses 工具链的兼容边界、未实现项和固定外部参考
 
-范围：Codex → Switcher → Google Antigravity → 工具调用 → Codex 本机执行 → 工具结果 → 后续回答。不是对 CPA 所有供应商、管理接口和产品功能的等价性声明。未运行 CPA 服务，也未引入 CPA 源码、依赖或系统提示词。
+CPA 固定参考提交：`17a65ee5470fbaf0e22fc219381e6a4ae9e07624`。范围仅为 Codex → Switcher → Google Antigravity → 工具调用/结果 → 后续回答，不声明与 CPA 的所有供应商、管理接口或产品能力等价。实际实现由 `src-tauri/src/antigravity/` 与 `src-tauri/src/proxy.rs` 所有。
 
-## 本次故障与修复
+## 必须保持的协议边界
 
-真实 Codex CLI（使用现有模型缓存/用户目录、忽略 config，临时工作目录、ephemeral）发出的请求包含 `input[].type=additional_tools`，没有顶层 `tools`。旧实现只读取顶层 tools。实测旧适配在此请求上返回 `MALFORMED_FUNCTION_CALL`；工具声明补齐后，又暴露 Google Schema 不接受 `encrypted` 注解的 HTTP 400。两项修复后，相同测试完成工具执行及回答。
+- Codex Responses 可能只在 `input[].type=additional_tools` 中声明工具；根 `tools` 与 additional tools 都必须被纳入工具来源。同名声明以 additional 定义覆盖根定义且不得重复声明；namespace、custom tool 身份不能在声明/调用/结果往返中漂移。
+- Google Schema 清理不能把 opaque 参数值改写成翻译文本；Google 不接受的注解需要在上游边界清理，但复杂 Schema 的语义不能被宣称为无损。
+- Claude thinking 与命名/强制工具选择的上游互斥必须显式失败；不得为了通过请求而静默改变 thinking 深度或工具选择语义。
+- custom tool 与普通 function 的 call/input/output 事件类型必须保持区分。工具由 Codex 侧执行；代理不得把 custom tool 误报为普通 function，也不得声称在 Google 侧强制执行 Lark/regex grammar。
+- thought signature / `encrypted_content` 之类的协议载荷属于 opaque wire data。往返时必须保持可关联性，不能因展示或日志处理而翻译、重写或吞掉。
+- 正常 EOF 与错误终止必须区分。只有完整工具帧与 usage 已经证明响应完整时，缺少 finishReason 的 clean EOF 才能按既有兼容规则处理；error、blockReason、异常 finish、MAX_TOKENS、传输中断不得伪装成 success/completed。
+- WS 桥当前不拥有 CPA 式服务端增量会话缓存。依赖第三方 preconnect id 或服务端 replay cache 的客户端不能据此被宣称兼容；当前路径以客户端重发完整 input 为基础。
+- 401/400/403/429 等错误必须按实际语义处理，不能把所有失败都当作可换号的容量耗尽；尤其短限流与真实耗尽需要独立分类。
 
-另外补齐自定义工具 output 的 `custom_tool_call/input`、namespace 和 done 事件，避免把它误报为普通 `function_call/arguments`。这些是确定的缺口；原先两个用户任务没有保存原始 Google 响应，因此不声称已经证明其每一次失败都由同一个 finishReason 引起。
+## 仍未完成或未充分证明
 
-## 全链路矩阵
+- 429 短限流、真实耗尽、`Retry-After` 与流开始前重试的细分。
+- 大规模同名/超长工具身份稳定性、并行工具结果乱序/缺失/重复的系统配对与去重。
+- `$ref/$defs/allOf` 等复杂 Schema、multi-signature / 多段 thought、跨模型或压缩历史重放。
+- 图片、base64/data URL、文件 MIME 等多模态工具结果事件链路。
+- OpenAI managed `web_search` / `tool_search`、MCP 动态发现、结构化输出、temperature/top_p、cached/thought token 细分。
+- idle/read timeout、WS 中途取消、心跳与断线恢复。未执行的 live OAuth、真实账号或第三方客户端验证不得记为通过。
 
-| 阶段 | CPA 参考实现 | Switcher 当前情况 | 差距 / 后续事项 |
-| --- | --- | --- | --- |
-| Google OAuth / Token | Antigravity auth、executor token refresh | 已有 Google 独立账号；Client 从 MiniMac 租用 ST，本机请求 Google | 架构有意不同，不把 RT 移回本机；本次未重测全套 OAuth 登录 |
-| 模型与额度选路 | 动态模型、账号选择、短限流/耗尽分支 | 已有动态目录、模型额度、独立当前号、失败后账号遍历 | 429 目前统一按模型耗尽处理，没有 CPA 的短冷却与真实耗尽细分 |
-| 工具声明来源 | `responsesToolSources` 同时读根 tools 和 additional_tools | **本次补齐**，additional 定义覆盖同名根定义，避免重复声明 | 声明顺序变化造成的长名/冲突短名稳定性仍可加强 |
-| 工具身份 | 正反向 name / namespace / custom 映射 | **本次补齐**，声明、调用、回传统一映射 | 大规模同名/超长工具集需更多测试 |
-| Schema | 多层级 Schema 清洗 | 已有清洗；**本次补齐 encrypted 注解过滤**，保留同名参数 | `$ref/$defs/allOf` 当前删除，anyOf/oneOf 选择分支，复杂约束非无损 |
-| 工具选择 | auto / none / required / 命名选择 | **本次补齐** Google functionCallingConfig 与允许列表 | Claude thinking 与强制工具选择互斥：明确报错，不能同时启用；不静默改思考深度 |
-| 自定义工具 | 解包 input，输出 custom_tool_call 与完成事件 | **本次补齐**，支持 Unicode、换行、JSON 转义和分片输入 | 不在 Google 侧执行 Lark/regex grammar 约束；客户端仍验证，模型可能需纠正一次参数 |
-| 普通函数 | JSON args、call_id、流事件 | 保持 function_call；**本次补齐**命名空间恢复与 arguments.done | 工具本身仍由 Codex 执行，不在代理里执行 |
-| 工具结果续接 | 普通/custom 输出、调用配对及重排 | 字符串输出已验证；**本次补齐** custom 历史输入 JSON 包装 | 多个并行结果乱序、缺少调用项、重复结果的系统性重排/去重尚不等价 |
-| 推理签名 | carrier、按项/方向/目标关联、服务端 replay cache | **本次补齐**通过 encrypted_content 携带签名，Codex 丢弃扩展字段后仍可恢复 | 目前单响应共享签名；多签名、多段 thought、跨模型切换/压缩历史重放未全面覆盖 |
-| HTTP SSE | 完整事件转换，clean EOF 收尾 | 已验证；**本次补齐**单调 sequence、多个 index=0 工具帧不合并、心跳跳过 | message/reasoning 的细粒度 part/done 事件仍少于 CPA，Codex 已接受但不宣称对所有客户端完全等价 |
-| 非流式 | 独立非流式转换 | **本次统一**复用相同工具身份、签名、终止验证；单测覆盖 | 未针对所有模型做非流式实测 |
-| 错误终止 | executor 读错误与正常 EOF 区分 | **本次补齐** error、blockReason、异常 finish、MAX_TOKENS 与传输错误，不再一律 completed | clean EOF + 完整工具 + usage 允许无 finishReason；其余无结束标志保守失败 |
-| WS 会话 | previous request/output/id、增量合并、pending tool ids、compaction | 已有 WS→本机 HTTP 桥；工具两轮同连接已验证 | **没有 CPA 的服务端增量会话缓存**，依靠空 response.id 让 Codex 重发完整 input |
-| WS 预连接 | 存储/复用预连接上下文 | **本次修正** generate:false 不再发非空虚构 id | 不支持依赖预连接 id 的第三方增量客户端；不能把空预连接响应当真实推理成功 |
-| 请求错误与换号 | 调度层控制错误分类与重试 | 401 ST 强刷已有；**本次修正** HTTP 400 不再遍历全部 Google 号 | 403、429 短限流、容量不足、Retry-After、流开始前重试策略还需细分 |
-| 多模态工具结果 | 图片输出块解析、inlineData、functionResponse parts | 普通文本工具结果支持 | 工具返回图片、base64/data URL、文件 MIME、图像输出事件链路未完整覆盖 |
-| 托管工具 | Google grounding / 搜索等专门适配 | 本机已经声明的函数工具可用 | OpenAI 托管 web_search / tool_search 不能视为已支持；MCP 动态发现另需适配 |
-| 参数与用量 | temperature/top_p、生成 Schema、用量细分 | reasoning/maxOutputTokens 已有；基本 input/output/total | 无 reasoning 时的 max_output_tokens、temperature/top_p、结构化输出映射需补齐；cached/thought token 细分不足 |
-| 连接治理 | 流 context 取消、keepalive 等 | 按账号连接池、metadata 预热已有 | idle/read timeout、WS 中途取消与心跳策略还需专项验证 |
+## 验证与源码入口
 
-## 验证证据
-
-- `src-tauri/src/antigravity/tool_tests.rs`：additional_tools、重复声明、自定义类型、namespace、签名经过 Codex 式序列化后续接、分片/转义、多调用、非法结束、工具选择、Relay 未启用 Google 转换、非流式签名、无 finishReason 的完整工具帧。
-- `scripts/google-tool-roundtrip.mjs 18082`：Gemini 3.8 自定义 exec 两轮 SSE 成功，不执行模型生成代码。
-- 同脚本 `18082 claude-sonnet-4-6`：Claude thinking + auto 选择，两轮成功。强制选择 + thinking 的上游互斥限制已实测。
-- 同脚本 `18082 gemini-3.8-flash-high ws`：同一 WebSocket 两轮工具结果续接成功。
-- `scripts/google-codex-probe.mjs 18082`：真实 CLI 普通函数执行 pwd 并回复；Gemini 和 Claude 均成功。
-- `GOOGLE_PROBE_USE_USER_HOME=1 ...`：使用用户现有模型缓存的 Responses Lite/additional_tools 请求，Gemini 成功执行 pwd 并续接。
-- `GOOGLE_PROBE_USE_USER_HOME=1 GOOGLE_PROBE_CUSTOM=1 ...`：真实 CLI 成功使用自定义 apply_patch 在临时目录建立 probe.txt，再通过命令工具读取并回复标记。此测试有模型纠正工具输入的回合，不能据此宣称 grammar 在上游被强制执行。
-- 正式构建：195 项 Rust 测试通过、1 项忽略；TypeScript/Vite/Tauri 构建通过。Gemini 非流式请求实际返回 `SYNC_OK`。
-- 部署后本机实际 Codex CLI（Responses Lite）执行 pwd、回传结果、最终回答通过；本机 Gemini WebSocket 和 Claude SSE 自定义工具两轮通过。
-- MiniMac 部署后，同一 WebSocket 预连接、自定义工具调用、结果回传、最终回答全部通过。
-- 未修改、重放或清理用户提供的两个故障任务，也未运行其路由器/Apple Pay 业务操作。
-
-## 部署记录
-
-- 本机与 MiniMac 均已安装同一正式构建，应用二进制 SHA-256：`7c8df12f1ce6a94ad5eb6deb001d034b1080d6440a21c9d6e5a4f75d61c9ccfd`。
-- 两台均保留 `/Applications/Codex Switcher.app.backup-20260903-141622`；仅重启 Switcher，没有重启 Codex Desktop。
-- 本机测试端口 18082 已关闭，正式代理恢复使用 18080。MiniMac 18080 / 18081 监听正常。
-- 新旧代理 GPT 目录过滤结果校验一致；本次改动未修改 GPT 选路/凭证流程。
-
-## 建议下一阶段顺序
-
-1. P1：429 短限流与真实耗尽分类，Retry-After；避免一次短限流把某模型长期标记耗尽。
-2. P1：按调用关联多个 thought signature、并行工具结果配对、复杂历史回放测试。
-3. P1：图片/文件工具结果、多模态往返；这是读取截图/浏览器结果时的重要缺口。
-4. P2：WS 增量会话、断线恢复与压缩历史；当前 Codex 使用完整 input，不急于改变默认路径。
-5. P2：复杂 Schema、生成参数、结构化输出、token 分类、托管工具和取消/超时治理。
+- `src-tauri/src/antigravity/tool_tests.rs`: additional tools、工具身份、custom/function 事件、签名、终止条件等回归。
+- `src-tauri/src/antigravity/translate.rs`, `src-tauri/src/antigravity/tools.rs`, `src-tauri/src/proxy.rs`: 当前实现入口。
+- `scripts/google-tool-roundtrip.mjs`, `scripts/google-codex-probe.mjs`: 隔离往返/CLI 探针。真实用户目录或账号模式只在任务明确授权时运行。
 
 ## 固定源码参考
 

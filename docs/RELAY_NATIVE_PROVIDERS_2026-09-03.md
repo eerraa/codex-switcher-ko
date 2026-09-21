@@ -1,6 +1,9 @@
-# Kimi / DeepSeek 原生 Responses 中转接入
+# Kimi / DeepSeek 原生 Responses 中转约束
 
-## 用户可见行为
+Genre: contract
+Canonical for: native Responses relay 的模型目录、凭据隔离、协议边界和验证入口
+
+## 用户可见与路由约束
 
 - 添加中转卡片统一展示公司/服务名称，不再展示模型版本。版本仅出现在默认模型配置和 Codex 模型选择器。
 - Kimi 默认 `https://api.moonshot.cn/v1`、`kimi-k3`，原生 Responses。
@@ -12,27 +15,18 @@
 
 ## 边界
 
-- 本阶段只给原生 Responses 中转增加独立模型目录。旧 Chat Completions 中转按原有方式使用，未自动升级、未改写已保存账号。
+- 此契约只覆盖原生 Responses 中转的独立模型目录。旧 Chat Completions 中转按原有方式使用，不自动升级或改写已保存账号。
 - 中转必须提供所选协议及模型；“免费”不代表无鉴权或支持全部官方模型。不会替用户声称服务免费/可用。
 - 目录来自配置的模型 ID，并非已通过 Key 从上游发现并验证的模型列表。新账号添加后 Codex 需要刷新模型目录才能显示。
 - 已知 Kimi / DeepSeek V4 使用官方 1M 上下文和 low/high/max 档位；自定义模型名不猜测其能力，保守提供基础元数据。
-- 原生中转元数据优先 HTTP。后续修复让携带明确 routing hint 的 WS 直接分流到本机 HTTP 桥；无 hint 老客户端仍保留首帧兜底。未引入跨供应商服务端会话缓存。
-- 本轮没有提供真实 Kimi / DeepSeek Key，因此不宣称真实上游对话或工具调用已经通过。
+- 原生中转元数据优先 HTTP。携带明确 routing hint 的 WS 直接分流到本机 HTTP 桥；无 hint 老客户端保留首帧兜底。未引入跨供应商服务端会话缓存。
+- 没有明确执行真实 Kimi / DeepSeek Key 验证时，不得宣称真实上游对话或工具调用已经通过。
 
-## 验证
+## 验证入口
 
-- Rust 全套测试：201 passed，1 ignored；TypeScript/Vite/Tauri 正式构建通过。包含同品牌多个 Kimi / DeepSeek 账号不会覆盖的回归测试。
-- `relay_catalog` 单测验证公司模型元数据、URL 自定义前缀、原生工具历史保持、失效模型拒绝、当前账号不变、凭据隔离。
-- `scripts/relay-native-mock.mjs` + `scripts/fixtures/relay-accounts.json` + `scripts/relay-native-smoke.mjs`，使用 debug-only `CODEX_SWITCHER_TEST_HOME` 在临时目录运行隔离账号库。
-- 完整模拟链路通过：/models → 分账号 /responses → custom_tool_call → custom_tool_call_output → 回答；自定义 DeepSeek API 路径正确；WS 路径通过；不存在的模型返回 400，不回落 GPT。
-- 内置浏览器验收真实 AddRelayModal 组件（Chrome 扩展连接失败后切换）：公司名称、默认地址、协议、模型 ID、Kimi 和 DeepSeek 地址编辑均通过。组件 fixture 无真实账号，不提交凭据。
-
-## 部署
-
-- 本机与 MiniMac 使用相同构建，二进制 SHA-256：`20853ce2792f243d9362f25c6663bb2e44046fe7de8ed8c6555e9a237da911a1`。
-- 两台均保留旧应用 `/Applications/Codex Switcher.app.backup-20260903-145308`。
-- 发布后本机 Google WebSocket 工具往返回归通过；新本机与旧 MiniMac 同时读取的模型目录逐项一致（尚未配置真实中转账号）。
-- 本地组件页面 1280px 验收无横向溢出；临时浏览器标签、1422/18082/18090 测试服务已关闭。
+- relay catalog / routing tests own company metadata、custom URL prefix、native tool history、invalid-model rejection、current-account independence and credential isolation.
+- `scripts/relay-native-mock.mjs` + `scripts/fixtures/relay-accounts.json` + `scripts/relay-native-smoke.mjs` 使用隔离账号 fixture；不存在的模型必须拒绝，不能静默回落 GPT。
+- UI fixture 可以验证 AddRelayModal 的展示与编辑边界，但不能证明真实 Kimi / DeepSeek Key、网络服务或 live account 可用。
 
 ## 官方依据
 

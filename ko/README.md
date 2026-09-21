@@ -4,7 +4,11 @@
 
 정본 버전은 `upstream.json`이다. 호환성 제출 목록은 같은 파일의 `compatibilityPRs`, 분리 기준은 `compatibilityPRBase`로 추적한다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 최신 릴리스 태그가 `upstream/main`보다 앞설 수 있으므로 버전명과 실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
 
+문서 체계 규약의 고정 revision은 `AGENTS.md` 한 곳이 소유한다. 일반 유지보수는 이 로컬 계약과 관련 소스·검사만으로 수행하며, 중앙 규약은 문서 체계를 바꿀 때만 조회한다.
+
 한국어 표시·번역 검사·Windows 패키징과 upstream 제출용 플랫폼 호환성 패치만 유지한다. 호환성 변경은 한국어 커밋과 분리하고 upstream 수용 시 중복을 제거한다. 계정·인증·라우팅 알고리즘, 사용자 데이터 스키마, 별명 등 독자 기능은 변경하지 않는다. 추가 npm/Cargo 패키지는 없다. 번역 자체는 `src/`를 재작성하지 않는 빌드 레이어이며, 기능 소스 차이는 검토된 플랫폼 경계와 원래 트레이 번역에 한정한다.
+
+`README.md`와 `docs/*.md`의 원본 제품 설명·프로토콜 자료는 구현과 배경을 확인하는 참고자료다. 거기에 남아 있는 macOS 앱 재시작, 사설 LAN/원격 호스트, scp 배포, 개인 `~/.claude` / `~/.codex` 전역 설정은 이 Windows 포크 작업의 실행 의무가 아니다. 설치·배포·실계정·전역 설정 변경은 현재 작업이 그 행위를 명시적으로 승인할 때만 수행한다.
 
 분리 PR은 각각 upstream 기준의 단일 커밋이며 서로 선행 병합을 요구하지 않는다. `compatibilityDeferred`는 현재 ko.3 구현에 남아 있지만 upstream 제출에서는 보류한 범위다. 기존 통합 구현은 `compatibilityArchive`에 보존한다. PR 분리만으로 한국어판 실행 코드·버전·설치 파일을 변경하지 않는다. 동기화 시 수용된 PR과 실제 source를 대조하여 중복만 제거한다.
 
@@ -30,7 +34,7 @@
 
 ## 명령
 
-Node 24와 lockfile의 의존성을 사용한다. Windows Rust 검증 기준은 1.94.0 MSVC이다.
+아래 명령은 영향별 검증·빌드 진입점이며 한 작업에서 모두 실행하는 체크리스트가 아니다. Node 24와 lockfile의 의존성을 사용하고 Windows Rust 검증 기준은 1.94.0 MSVC이다. 패키지 설치, native build, 브라우저 smoke, 설치 파일 생성은 현재 작업의 영향과 권한에 맞을 때만 실행한다.
 
 ```text
 npm ci
@@ -47,6 +51,8 @@ node ko/build-windows.mjs
 
 ## upstream 갱신: 중급 워커 실행 순서
 
+이 절은 upstream sync/release 작업이 명시적으로 승인된 경우에만 적용한다. 문서를 읽는 것 자체가 fetch, branch 생성, merge, 패키지 설치, push, tag 권한을 부여하지 않는다.
+
 1. dirty 변경을 보존하고 `git fetch upstream --tags`한다. 릴리스의 실제 commit/version을 확인한다. 원본 README의 최신 표기나 `main` 위치만 믿지 않는다.
 2. `git switch -c sync/<선택한 버전>` 후 이전 `upstream.json.commit`부터 선택한 commit까지의 diff만 검토한다. 기능은 upstream 우선이다. 제출한 호환성 PR의 병합 여부와 동등한 수정의 존재를 확인해 중복 패치를 제거한다. 한국어 때문에 기능 충돌을 독자 해결하거나 코드를 정리하지 않는다.
 3. 선택한 commit을 merge한다. `npm ci` 후 `npm run i18n:audit`에서 보고한 원문/표시 위치를 처리한다. 내부 값이면 보호 규칙과 표시 지점을 함께 등록하고 회귀 테스트를 추가한다. Rust 변경은 사용자 노출 경로만 사전에 추가한다.
@@ -62,7 +68,7 @@ Account=계정, Proxy=프록시, Relay/中转=릴레이, Route=라우팅, Quota=
 ## 배포와 검증 경계
 
 - Windows 설치 파일: `src-tauri/target/release/bundle/nsis/`. 빌드는 설치/실행과 다르다. 서명하지 않은 패키지는 Windows의 보안 경고가 나올 수 있다.
-- 앱 식별자, 데이터 디렉터리, OAuth/deep-link 스킴, 프록시 포트는 원본과 같다. 별도 격리 제품이 아니므로 원본을 종료하고 데이터를 백업한 후 설치한다. 인증·프록시가 정상 동작하는지 실제 사용 환경에서 최종 확인해야 한다.
+- 앱 식별자, 데이터 디렉터리, OAuth/deep-link 스킴, 프록시 포트는 원본과 같다. 실제 설치가 승인된 작업에서만 원본을 종료하고 데이터를 백업한 뒤 설치하며, 인증·프록시는 그 실제 사용 환경에서 별도로 확인한다.
 - 자동 검사: 문자열 감사, 변환 타입 검사, 원본 대비 계산/분류 회귀, 가짜 계정/IPC 브라우저 검사, Rust 컴파일, Windows 패키징. 모의 UI 통과는 실제 OAuth·계정 전환·프록시 네트워크·native WebView2/트레이 실기기 검증을 의미하지 않는다.
 - macOS/Linux 실기기 검증·서명·notarization·배포는 이 한국어 Windows 릴리스의 검증 범위가 아니다. 원본 의존성 취약점/경고를 번역 작업에서 임의 업그레이드로 해결하지 않는다.
 - `korean.yml`은 검사만 수행한다. 원본 의존성 조합에서 `__TAURI_BUNDLE_TYPE` 경고가 발생할 수 있다. 현재 이 프로젝트는 updater plugin을 사용하지 않지만, 향후 자동 업데이트 도입 시 해당 경고를 별도로 검토한다. `korean-windows.yml`은 수동 실행으로 설치 파일 artifact만 만든다. 원본 `release.yml`은 이 포크에서 실행되지 않으며 자동 공개 릴리스/자동 upstream 병합은 없다.
