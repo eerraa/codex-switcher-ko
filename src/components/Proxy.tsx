@@ -1,9 +1,10 @@
+import { codexLaunchCommand, isWindows } from '../utils/codexCommand';
 import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Copy, Check, Save } from 'lucide-react';
 import './Proxy.css';
-import { codexLaunchCommand, isMacOS, isWindows } from '../platform';
+import { isMacOS } from '../platform';
 
 interface ProxyStatus {
     enabled: boolean;
@@ -129,7 +130,7 @@ export function Proxy() {
         setMessage(null);
         try {
             const result = await invoke<string>('set_proxy_env', { port, enable });
-            setMessage({ type: 'success', text: isWindows ? result : result + '（新终端窗口生效）' });
+            setMessage({ type: 'success', text: result + '（新终端窗口生效）' });
             setTimeout(() => setMessage(null), 5000);
         } catch (e) {
             setMessage({ type: 'error', text: `${e}` });
@@ -161,7 +162,6 @@ export function Proxy() {
             setMessage({ type: 'error', text: String(error) });
         }
     };
-
     const isRunning = status?.is_running ?? false;
     const isEnabled = settings?.proxy_enabled ?? false;
 
@@ -306,9 +306,9 @@ export function Proxy() {
 
                 <div className="setting-item">
                     <div className="setting-info">
-                        <span className="setting-label">{isWindows ? 'Codex 代理配置（CLI + App）' : '全局代理（CLI + App 全覆盖）'}</span>
+                        <span className="setting-label">全局代理（CLI + App 全覆盖）</span>
                         <span className="setting-desc">
-                            {isWindows ? '写入 ~/.codex/config.toml，重启 Codex CLI / App 后生效；不修改 Windows 系统环境变量。' : '同时写入 ~/.zshrc、launchctl 和 ~/.codex/config.toml，终端 CLI 和 Codex App 均走代理'}
+                            同时写入 ~/.zshrc、launchctl 和 ~/.codex/config.toml，终端 CLI 和 Codex App 均走代理
                         </span>
                     </div>
                     <div className="env-btn-group">
@@ -317,7 +317,7 @@ export function Proxy() {
                             onClick={() => handleSetEnv(true)}
                             disabled={envWriting}
                         >
-                            {envWriting ? '...' : isWindows ? '写入 Codex 配置' : '写入环境变量'}
+                            {envWriting ? '...' : '写入环境变量'}
                         </button>
                         <button
                             className="btn btn-sm btn-ghost"

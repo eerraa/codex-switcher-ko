@@ -114,7 +114,10 @@ test('referral eligibility and capacity are unchanged; narrow labels remain inte
   const original = execute(source, file, null);
   const korean = execute(source, file);
   for (const plan of [null, 'plus', 'pro', 'team', 'free', 'unknown']) assert.equal(korean.referralProgramForPlan(plan), original.referralProgramForPlan(plan));
-  for (const offer of [null, {}, { should_show: true, remaining_send_capacity: 12, remaining_reward_capacity: 3, offer_id: 'credits_250' }]) assert.equal(korean.referralCapacity(offer), original.referralCapacity(offer));
+  for (const offer of [null, {}, { should_show: true, remaining_send_capacity: 12, remaining_reward_capacity: 3, offer_id: 'credits_250' }]) {
+    assert.equal(korean.referralSendCapacity(offer), original.referralSendCapacity(offer));
+    assert.equal(korean.referralRewardCapacity(offer), original.referralRewardCapacity(offer));
+  }
   assert.equal(korean.referralProgramLabel('codex_referral_workspace'), '工作区活动');
   assert.equal(runtime.message(korean.referralProgramLabel('codex_referral_workspace')), '워크스페이스 추천 이벤트');
 });

@@ -139,3 +139,13 @@ fn run_applescript(script: &str) -> Result<String, String> {
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
+
+#[cfg(all(test, not(target_os = "macos")))]
+mod tests {
+    #[test]
+    fn unsupported_actions_return_before_spawning_platform_tools() {
+        assert!(super::detect_running_ides().is_empty());
+        assert!(super::reload_ide("Visual Studio Code", false).unwrap_err().contains("macOS"));
+        assert!(super::remove_quarantine().unwrap_err().contains("macOS"));
+    }
+}

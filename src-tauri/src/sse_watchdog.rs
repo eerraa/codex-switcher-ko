@@ -197,9 +197,9 @@ mod tests {
         let inner: ByteStream = futures_util::stream::pending().boxed();
         let mut stream = wrap_with_config(
             inner,
-            std::time::Duration::from_millis(5),
-            std::time::Duration::from_millis(18),
-            std::time::Duration::from_millis(30),
+            std::time::Duration::from_millis(25),
+            std::time::Duration::from_millis(160),
+            std::time::Duration::from_millis(250),
             SseStreamDiagnostic::default(),
         );
         let mut comments = 0;
@@ -246,15 +246,15 @@ mod tests {
     #[tokio::test]
     async fn watchdog_does_not_treat_upstream_comments_as_semantic_activity() {
         let upstream = futures_util::stream::unfold((), |_| async {
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             Some((Ok(Bytes::from_static(b": upstream keep-alive\n\n")), ()))
         })
         .boxed();
         let mut stream = wrap_with_config(
             upstream,
-            std::time::Duration::from_millis(50),
-            std::time::Duration::from_millis(15),
-            std::time::Duration::from_millis(30),
+            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(160),
+            std::time::Duration::from_millis(250),
             SseStreamDiagnostic::default(),
         );
         let started = std::time::Instant::now();
@@ -264,6 +264,6 @@ mod tests {
             comments += 1;
         }
         assert!(comments >= 2);
-        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
     }
 }

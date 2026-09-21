@@ -268,10 +268,43 @@ fn parse_callback_input(input: &str) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
-/// Native clipboard write, independent of WebView user-gesture lifetime.
+#[cfg(windows)]
 #[tauri::command]
 pub async fn copy_to_clipboard(text: String) -> Result<(), String> {
-    crate::clipboard::write_text(&text).await
+    crate::windows_clipboard::write_text(&text).await
+}
+
+/// macOS 端剪贴板写入：webview 的 `navigator.clipboard.writeText` 在跨过 await
+/// 后会丢失 user-gesture，触发 NotAllowedError；改走 pbcopy 通过 Tauri IPC 写入，
+/// 不依赖 user gesture，也避开 webview 权限提示。
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn copy_to_clipboard(text: String) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("pbcopy")
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("无法启动 pbcopy: {}", e))?;
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "pbcopy stdin 不可写".to_string())?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| format!("写入 pbcopy 失败: {}", e))?;
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| format!("等待 pbcopy 退出失败: {}", e))?;
+    if !status.success() {
+        return Err(format!("pbcopy 返回非零: {:?}", status.code()));
+    }
+    Ok(())
 }
 
 /// 最后一步：使用捕获到的 Code 交换 Token (由前端触发)

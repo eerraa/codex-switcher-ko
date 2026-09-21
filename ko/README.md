@@ -2,7 +2,7 @@
 
 ## 기준과 범위
 
-정본 버전은 `upstream.json`이다. 호환성 제출 목록은 같은 파일의 `compatibilityPRs`, 분리 기준은 `compatibilityPRBase`로 추적한다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 최신 릴리스 태그가 `upstream/main`보다 앞설 수 있으므로 버전명과 실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
+정본 버전은 `upstream.json`의 `version`과 `commit`이다. `tag`는 해당 시점에 존재하는 최근 릴리스 태그이며 선택한 main commit과 다를 수 있다. 호환성 제출 목록은 같은 파일의 `compatibilityPRs`, 분리 기준은 `compatibilityPRBase`로 추적한다. `origin`은 `eerraa/codex-switcher-ko`, `upstream`은 `VallierDev/codex-switcher`. 버전명·릴리스 태그·실제 커밋을 함께 확인한다. 한국어판 태그는 `v<원본 버전>-ko.<패치 번호>`.
 
 문서 체계 규약의 고정 revision은 `AGENTS.md` 한 곳이 소유한다. 일반 유지보수는 이 로컬 계약과 관련 소스·검사만으로 수행하며, 중앙 규약은 문서 체계를 바꿀 때만 조회한다.
 
@@ -10,7 +10,7 @@
 
 `README.md`와 `docs/*.md`의 원본 제품 설명·프로토콜 자료는 구현과 배경을 확인하는 참고자료다. 거기에 남아 있는 macOS 앱 재시작, 사설 LAN/원격 호스트, scp 배포, 개인 `~/.claude` / `~/.codex` 전역 설정은 이 Windows 포크 작업의 실행 의무가 아니다. 설치·배포·실계정·전역 설정 변경은 현재 작업이 그 행위를 명시적으로 승인할 때만 수행한다.
 
-분리 PR은 각각 upstream 기준의 단일 커밋이며 서로 선행 병합을 요구하지 않는다. `compatibilityDeferred`는 현재 ko.3 구현에 남아 있지만 upstream 제출에서는 보류한 범위다. 기존 통합 구현은 `compatibilityArchive`에 보존한다. PR 분리만으로 한국어판 실행 코드·버전·설치 파일을 변경하지 않는다. 동기화 시 수용된 PR과 실제 source를 대조하여 중복만 제거한다.
+분리 PR은 각각 upstream 기준의 단일 커밋이며 서로 선행 병합을 요구하지 않는다. `compatibilityDeferred`는 현재 한국어판 구현에 남아 있지만 upstream 제출에서는 보류한 범위다. 기존 통합 구현은 `compatibilityArchive`에 보존한다. PR 분리만으로 한국어판 실행 코드·버전·설치 파일을 변경하지 않는다. 동기화 시 수용된 PR과 실제 source를 대조하여 중복만 제거한다.
 
 ## 구조: 원본 보존형 빌드 레이어
 

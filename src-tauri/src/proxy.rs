@@ -514,20 +514,29 @@ pub fn start(
 /// 返回 (token, is_chatgpt_auth)
 async fn get_current_token(state: &ProxyState) -> Result<(String, bool), String> {
     // 1) 从 store 取一小段快照，尽快释放锁
-    let (current_id, remote_mode, primary, fallback, secret) = {
+    let (current_id, remote_mode, primary, fallback, secret, current_is_relay) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
-        let id = store.current.as_ref().ok_or("没有激活的账号")?.clone();
+        let id = store
+            .current
+            .clone()
+            .or_else(|| crate::relay_catalog::relay_only_account_id(&store))
+            .ok_or("没有激活的账号")?;
+        let current_is_relay = store
+            .accounts
+            .get(&id)
+            .is_some_and(|account| account.is_relay());
         (
             id,
             store.settings.remote_mode.clone(),
             store.settings.remote_server_url.clone(),
             store.settings.remote_server_url_fallback.clone(),
             store.settings.remote_shared_secret.clone(),
+            current_is_relay,
         )
     };
 
     // 2) client 模式：优先命中本地短缓存；miss 时去 Server 拿新鲜 token
-    if remote_mode == "client" && !secret.is_empty() {
+    if remote_mode == "client" && !current_is_relay && !secret.is_empty() {
         if let Some((tok, is_chatgpt)) = remote_token_cache_get(&current_id) {
             return Ok((tok, is_chatgpt));
         }
@@ -597,7 +606,11 @@ async fn resolve_token_with_affinity(
 ) -> Result<(String, bool, Option<String>, bool), String> {
     let Some(sk) = session_key else {
         let (tok, is_cgpt) = get_current_token(state).await?;
-        let cur = state.store.lock().ok().and_then(|s| s.current.clone());
+        let cur = state.store.lock().ok().and_then(|s| {
+            s.current
+                .clone()
+                .or_else(|| crate::relay_catalog::relay_only_account_id(&s))
+        });
         return Ok((tok, is_cgpt, cur, false));
     };
 
@@ -726,7 +739,11 @@ async fn resolve_token_with_affinity(
     }
 
     let (tok, is_cgpt) = get_current_token(state).await?;
-    let cur = state.store.lock().ok().and_then(|s| s.current.clone());
+    let cur = state.store.lock().ok().and_then(|s| {
+        s.current
+            .clone()
+            .or_else(|| crate::relay_catalog::relay_only_account_id(&s))
+    });
     Ok((tok, is_cgpt, cur, false))
 }
 
@@ -1852,10 +1869,13 @@ async fn handle_named_relay_response(
     state: Arc<ProxyState>,
     method: Method,
     path: &str,
+    req_headers: hyper::HeaderMap,
     body: Bytes,
     slug: &str,
 ) -> Response<ProxyBody> {
-    if method != Method::POST || !path.split('?').next().unwrap_or("").ends_with("/responses") {
+    let path_only = path.split('?').next().unwrap_or("");
+    let is_compact = is_responses_compact_path(path);
+    if method != Method::POST || (!path_only.ends_with("/responses") && !is_compact) {
         return error_response(
             StatusCode::BAD_REQUEST,
             "Selected relay model requires the Responses API",
@@ -1868,23 +1888,72 @@ async fn handle_named_relay_response(
             model,
             account.relay_base_url.clone()?,
             AccountStore::extract_access_token(&account.auth_json)?,
+            account.relay_protocol_or_default().to_string(),
         ))
     });
-    let Some((model, base, key)) = target else {
+    let Some((model, base, key, protocol)) = target else {
         // Never silently send a removed/disabled relay model to the ChatGPT account.
         return error_response(
             StatusCode::BAD_REQUEST,
             "Selected relay model is unavailable; check its account, API key and protocol",
         );
     };
+    if protocol == "chat_completions" {
+        if method != Method::POST || (!path.split('?').next().unwrap_or("").ends_with("/responses") && !is_compact) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "Selected chat relay model requires the Responses API",
+            );
+        }
+        let mut value: serde_json::Value = match serde_json::from_slice(&body) {
+            Ok(value) => value,
+            Err(error) => return error_response(StatusCode::BAD_REQUEST, &error.to_string()),
+        };
+        if let Some(object) = value.as_object_mut() {
+            object.insert("model".to_string(), serde_json::json!(model.upstream));
+        }
+        let body = match serde_json::to_vec(&value) {
+            Ok(body) => Bytes::from(body),
+            Err(error) => return error_response(StatusCode::BAD_REQUEST, &error.to_string()),
+        };
+        let Some(relay) = relay_route_for_account(&state, &model.account_id) else {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "Selected chat relay account unavailable",
+            );
+        };
+        // body_for_routing 已经按原始 Content-Encoding 解压过；不要让下游
+        // Chat Completions 翻译器看到 zstd/gzip 头后再次解压同一份 JSON。
+        let mut relay_headers = req_headers;
+        relay_headers.remove(hyper::header::CONTENT_ENCODING);
+        relay_headers.remove(hyper::header::CONTENT_LENGTH);
+        return handle_chat_completions_relay(
+            state,
+            relay,
+            method,
+            path.to_string(),
+            relay_headers,
+            body,
+        )
+        .await;
+    }
+    if method != Method::POST || !path.split('?').next().unwrap_or("").ends_with("/responses") {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "Selected relay model requires the Responses API",
+        );
+    }
     // Fresh headers: do not leak a ChatGPT bearer, account id, cookies or private
     // routing headers to a third-party API. Native Responses body/events pass through.
-    let response =
-        match crate::relay_catalog::forward_native(&state.client, &base, &key, &body, &model).await
-        {
-            Ok(response) => response,
-            Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error),
-        };
+    let response = match if is_compact {
+        crate::relay_catalog::forward_native_compact(&state.client, &base, &key, &body, &model)
+            .await
+    } else {
+        crate::relay_catalog::forward_native(&state.client, &base, &key, &body, &model).await
+    } {
+        Ok(response) => response,
+        Err(error) => return error_response(StatusCode::BAD_GATEWAY, &error),
+    };
     if response.status().is_success() {
         if let Ok(mut store) = state.store.lock() {
             if let Some(account) = store.accounts.get_mut(&model.account_id) {
@@ -1896,10 +1965,20 @@ async fn handle_named_relay_response(
     build_stream_response(response, None, None)
 }
 
+fn is_responses_compact_path(path: &str) -> bool {
+    path.split('?')
+        .next()
+        .unwrap_or("")
+        .ends_with("/responses/compact")
+}
+
 /// 取 store.current 的 Relay 路由信息（仅 Relay 类型；其它 None）。
 fn current_relay_route(state: &ProxyState) -> Option<RelayRoute> {
     let store = state.store.lock().ok()?;
-    let id = store.current.clone()?;
+    let id = store
+        .current
+        .clone()
+        .or_else(|| crate::relay_catalog::relay_only_account_id(&store))?;
     let acc = store.accounts.get(&id)?;
     if !acc.is_relay() {
         return None;
@@ -3066,6 +3145,16 @@ async fn handle_request(
                 );
                 return handle_chat_completions_relay_websocket(state, relay, req).await;
             }
+            if relay.protocol == "responses" {
+                // Most Responses relays expose HTTP/SSE only. Reuse the local
+                // Responses bridge instead of assuming the relay also accepts
+                // a native WebSocket handshake.
+                println!(
+                    "[Proxy] Responses Relay WS → local HTTP/SSE bridge: {}",
+                    req.uri()
+                );
+                return handle_model_routed_websocket(state, req).await;
+            }
         }
         println!("[Proxy] WebSocket upgrade 请求: {}", req.uri());
         return handle_websocket(state, req).await;
@@ -3099,6 +3188,7 @@ async fn handle_request(
                 state,
                 method,
                 &path_and_query,
+                req_headers,
                 body_for_routing,
                 &model,
             )
@@ -3126,10 +3216,15 @@ async fn handle_request(
     }
 
     // ── Relay 路由前置处理 ──
-    // 1) 当 current 是 Relay 时，重写 body 里的 `model` 字段（codex 端发的 gpt-* → glm-*）
-    // 2) Relay 不能走 client→Server 转发：Server 不知道这账号，会一路 fall through 浪费时间
+    // 1) Hard route 优先覆盖 current；2) 当有效 Relay 存在时重写 body 里的
+    // `model` 字段（codex 端发的 gpt-* → 上游实际模型）；3) Relay 不能走
+    // client→Server 转发，必须在 token 解析前锁定它自己的 API key/base_url。
     let relay_route = current_relay_route(&state);
-    let body_bytes = if let Some(ref r) = relay_route {
+    let hard_route_relay: Option<RelayRoute> =
+        resolve_hard_route(&state, &body_bytes, &req_headers)
+            .and_then(|(_sk, aid)| relay_route_for_account(&state, &aid));
+    let effective_relay = hard_route_relay.as_ref().or(relay_route.as_ref());
+    let body_bytes = if let Some(r) = effective_relay {
         rewrite_model_in_body(
             &body_bytes,
             r.model_map.as_ref(),
@@ -3139,18 +3234,10 @@ async fn handle_request(
         body_bytes
     };
 
-    // ── Hard route 检查（HTTP 路径）──
-    // 如果该 session 有 enabled 路由 → 用绑定账号的 RelayRoute 覆盖 current。
-    // 注意：必须在 chat_completions 翻译分支之前，否则 current 是普通号会跳过翻译。
-    let hard_route_relay: Option<RelayRoute> =
-        resolve_hard_route(&state, &body_bytes, &req_headers)
-            .and_then(|(_sk, aid)| relay_route_for_account(&state, &aid));
-
     // ── chat_completions Relay 翻译分支 ──
     // Relay 上游只懂 /chat/completions（GLM Coding Plan / MiMo 等）→ 用 relay_translate 把
     // codex 的 /v1/responses 翻译成 chat 协议，调好上游再把响应（SSE 或 sync）反翻译回来。
     // 优先用 hard_route_relay（用户显式指定的路由）；否则用 current_relay_route。
-    let effective_relay = hard_route_relay.as_ref().or(relay_route.as_ref());
     if let Some(r) = effective_relay {
         if r.protocol == "chat_completions" {
             return Ok(handle_chat_completions_relay(
@@ -3189,7 +3276,7 @@ async fn handle_request(
     // 到下面的本地路径（resolve_token_with_affinity → forward_with_token）。
     // resolve_token_with_affinity 在 client 模式下会自动从 Server fetch_token，
     // 所以 token 中心化的语义保留。
-    if remote_mode == "client" && relay_route.is_none() && !client_direct_upstream {
+    if remote_mode == "client" && effective_relay.is_none() && !client_direct_upstream {
         // 先尝试 silent retry：peek 响应首 chunk，撞 usage_limit_reached 就切号重试，最多 3 次
         match forward_to_server_with_silent_retry(
             &state,
@@ -3261,12 +3348,37 @@ async fn handle_request(
         }
     }
 
-    // 1. 获取 token —— 优先按 session affinity 选号，其次落回 current
-    //    hard_routed=true 表示命中用户主动定义的 session_routes（严格模式：不要切号/refresh）
+    // 1. 获取认证信息：native Responses Relay 必须锁定 Relay 自己的 API key，
+    // 不能让本地 HTTP/SSE bridge 回落到官方 OAuth token。chat_completions Relay
+    // 已在上面的适配分支返回；其余请求才走账号池/affinity。
+    // hard_routed=true 表示命中用户主动定义的 session_routes（严格模式：不要切号/refresh）。
     let (token, is_chatgpt, used_account_id, hard_routed) =
-        match resolve_token_with_affinity(&state, session_key.as_deref()).await {
-            Ok(t) => t,
-            Err(e) => return Ok(error_response(StatusCode::SERVICE_UNAVAILABLE, &e)),
+        if let Some(relay) = effective_relay.filter(|r| r.protocol == "responses") {
+            let token = relay
+                .api_key
+                .clone()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Responses Relay 缺少 API key".to_string());
+            match token {
+                Ok(token) => {
+                    println!(
+                        "[Proxy] native Responses Relay → {} {} (account={})",
+                        method, path_and_query, relay.account_id
+                    );
+                    (
+                        token,
+                        false,
+                        Some(relay.account_id.clone()),
+                        hard_route_relay.is_some(),
+                    )
+                }
+                Err(error) => return Ok(error_response(StatusCode::SERVICE_UNAVAILABLE, &error)),
+            }
+        } else {
+            match resolve_token_with_affinity(&state, session_key.as_deref()).await {
+                Ok(t) => t,
+                Err(e) => return Ok(error_response(StatusCode::SERVICE_UNAVAILABLE, &e)),
+            }
         };
     let body_bytes = if is_chatgpt {
         normalize_chatgpt_responses_body(&body_bytes, &path_and_query, &req_headers)
@@ -6308,12 +6420,14 @@ async fn handle_websocket(
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/".to_string());
-    let relay_base_url = state
-        .store
-        .lock()
-        .ok()
-        .and_then(|s| s.current.clone())
-        .and_then(|id| account_relay_base_url(&state, &id));
+    let relay_account_id = state.store.lock().ok().and_then(|s| {
+        s.current
+            .clone()
+            .or_else(|| crate::relay_catalog::relay_only_account_id(&s))
+    });
+    let relay_base_url = relay_account_id
+        .as_deref()
+        .and_then(|id| account_relay_base_url(&state, id));
     let (http_url, _upstream_host) = get_upstream(is_chatgpt, relay_base_url.as_deref(), &path);
 
     // http(s):// → ws(s)://
@@ -7660,6 +7774,15 @@ fn build_chat_completions_url(base_url: &str) -> Option<(String, String)> {
     Some((format!("{}/chat/completions", trimmed), host))
 }
 
+fn is_stepfun_plan_base_url(base_url: &str) -> bool {
+    let Ok(url) = url::Url::parse(base_url.trim_end_matches('/')) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str() == Some("api.stepfun.com")
+        && url.path().trim_end_matches('/') == "/step_plan/v1"
+}
+
 /// 把厂商自家 chat_completions 错误体翻译成 codex 能识别的标准 OpenAI 错误。
 ///
 /// codex CLI 收到 `/v1/responses` 4xx 时按 OpenAI 错误格式 `{error:{code,message,type}}`
@@ -8140,8 +8263,57 @@ async fn handle_chat_completions_relay(
 ) -> Response<ProxyBody> {
     let path_lc = path_and_query.split('?').next().unwrap_or("").to_string();
 
-    // GET /v1/models → 本地合成最小响应，不打上游
+    if is_responses_compact_path(&path_lc) {
+        return relay_compaction_unavailable_response();
+    }
+
+    // Step Plan 有官方 OpenAI-compatible /models；直接返回它的原生 step-* 列表，
+    // 不把 gpt-* 别名映射成固定模型。其它 chat relay 仍保留本地最小兜底。
     if method == hyper::Method::GET && (path_lc == "/v1/models" || path_lc.ends_with("/models")) {
+        if is_stepfun_plan_base_url(relay.base_url.as_deref().unwrap_or("")) {
+            let base = relay
+                .base_url
+                .as_deref()
+                .unwrap_or("")
+                .trim_end_matches('/');
+            let upstream_url = format!("{}/models", base);
+            let host = match url::Url::parse(base)
+                .ok()
+                .and_then(|url| url.host_str().map(String::from))
+            {
+                Some(host) => host,
+                None => {
+                    return error_response(
+                        StatusCode::BAD_GATEWAY,
+                        "StepFun base_url 无法解析 host",
+                    )
+                }
+            };
+            let mut headers = build_chat_relay_upstream_headers(&host);
+            let api_key = relay.api_key.clone().unwrap_or_default();
+            if !api_key.is_empty() {
+                if let Ok(value) =
+                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", api_key))
+                {
+                    headers.insert(reqwest::header::AUTHORIZATION, value);
+                }
+            }
+            match state
+                .client
+                .get(&upstream_url)
+                .headers(headers)
+                .send()
+                .await
+            {
+                Ok(response) => return build_stream_response(response, None, None),
+                Err(error) => {
+                    return error_response(
+                        StatusCode::BAD_GATEWAY,
+                        &format!("StepFun /models 请求失败: {}", error),
+                    )
+                }
+            }
+        }
         let default_model = relay
             .model_fallback
             .clone()
@@ -8522,6 +8694,21 @@ async fn handle_chat_completions_relay(
     )
 }
 
+fn relay_compaction_unavailable_response() -> Response<ProxyBody> {
+    let body = serde_json::json!({
+        "error": {
+            "type": "rate_limit_error",
+            "code": "compaction_not_supported",
+            "message": "This chat-completions Relay cannot provide Responses compaction; Codex may continue without this compaction attempt."
+        }
+    });
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("content-type", "application/json")
+        .body(full_body(Bytes::from(body.to_string())))
+        .unwrap_or_else(|_| error_response(StatusCode::TOO_MANY_REQUESTS, "compaction unavailable"))
+}
+
 fn error_response(status: StatusCode, message: &str) -> Response<ProxyBody> {
     let body = serde_json::json!({
         "error": {
@@ -8546,6 +8733,21 @@ fn error_response(status: StatusCode, message: &str) -> Response<ProxyBody> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compaction_path_detection_ignores_query_parameters() {
+        assert!(is_responses_compact_path("/v1/responses/compact"));
+        assert!(is_responses_compact_path(
+            "/v1/responses/compact?model=gpt-5.5"
+        ));
+        assert!(!is_responses_compact_path("/v1/responses"));
+    }
+
+    #[test]
+    fn chat_relay_compaction_is_retryable_not_a_fake_completion() {
+        let response = relay_compaction_unavailable_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
 
     #[test]
     fn provider_ws_hint_supplies_omitted_model_without_overriding_explicit_model() {

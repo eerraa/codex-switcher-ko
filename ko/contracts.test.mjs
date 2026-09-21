@@ -10,9 +10,11 @@ const read = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 
 test('release metadata has one upstream version and one Korean patch version', () => {
   const base = read('ko/upstream.json');
-  assert.equal(base.tag, 'v' + read('package.json').version);
+  assert.equal(base.version, read('package.json').version);
+  assert.match(base.tag, /^v\d+\.\d+\.\d+$/);
   assert.match(base.commit, /^[0-9a-f]{40}$/);
   assert.equal(read('ko/tauri.windows.json').version, base.koreanVersion);
+  assert.equal(base.koreanVersion.split('-ko.')[0], base.version);
   assert.match(base.koreanVersion, /^\d+\.\d+\.\d+-ko\.\d+$/);
 });
 

@@ -1,4 +1,4 @@
-//! Independently selectable native Responses relays. No mutation of store.current.
+//! Independently selectable native Relay models. No mutation of store.current.
 use crate::account::{Account, AccountStore};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -44,13 +44,17 @@ pub fn is_relay_model_slug(slug: &str) -> bool {
 }
 
 pub fn account_models(account: &Account) -> BTreeSet<String> {
-    if !account.is_relay() || account.relay_protocol_or_default() != "responses" {
+    if !account.is_relay()
+        || (account.relay_protocol_or_default() != "responses"
+            && account.relay_usage_preset.as_deref() != Some("stepfun_plan")
+            && account.relay_model_catalog.is_empty())
+    {
         return BTreeSet::new();
     }
     let mut models: BTreeSet<String> = account
-        .relay_model_map
+        .relay_model_catalog
         .iter()
-        .flat_map(|m| m.values())
+        .chain(account.relay_model_map.iter().flat_map(|m| m.values()))
         .chain(account.relay_model_fallback.iter())
         .map(|m| m.trim().to_owned())
         .filter(|m| !m.is_empty())
@@ -59,6 +63,81 @@ pub fn account_models(account: &Account) -> BTreeSet<String> {
         models.extend(LOCAL_AGY_MODELS.iter().map(|model| (*model).to_owned()));
     }
     models
+}
+
+pub fn models_url(base: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(base.trim()).map_err(|_| "Invalid relay API URL")?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Relay API URL must be HTTP(S), without credentials, query or fragment".into());
+    }
+    let path = url.path().trim_end_matches('/');
+    url.set_path(&format!(
+        "{}/models",
+        if path.is_empty() { "" } else { path }
+    ));
+    Ok(url.to_string())
+}
+
+pub fn parse_models_response(body: &Value) -> Vec<String> {
+    let values = body
+        .get("data")
+        .or_else(|| body.get("models"))
+        .and_then(Value::as_array);
+    let mut ids = BTreeSet::new();
+    if let Some(values) = values {
+        for value in values {
+            let id = value
+                .get("id")
+                .or_else(|| value.get("slug"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty());
+            if let Some(id) = id {
+                ids.insert(id.to_owned());
+            }
+        }
+    }
+    ids.into_iter().collect()
+}
+
+pub async fn fetch_models(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+) -> Result<Vec<String>, String> {
+    let url = models_url(base)?;
+    let response = client
+        .get(&url)
+        .bearer_auth(api_key)
+        .header("Accept", "application/json")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|error| format!("模型列表请求失败: {}", error))?;
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("模型列表 JSON 解析失败: {}", error))?;
+    if !status.is_success() {
+        let message = body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .or_else(|| body.get("message").and_then(Value::as_str))
+            .unwrap_or("上游拒绝了模型列表请求");
+        return Err(format!("HTTP {} @ {} → {}", status.as_u16(), url, message));
+    }
+    let models = parse_models_response(&body);
+    if models.is_empty() {
+        return Err("上游模型列表为空或响应格式不识别".to_string());
+    }
+    Ok(models)
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +149,7 @@ pub struct Model {
     pub account_id: String,
     pub account_name: String,
     pub upstream: String,
+    pub protocol: String,
 }
 
 pub fn candidates(store: &AccountStore) -> Vec<Model> {
@@ -90,6 +170,7 @@ pub fn candidates(store: &AccountStore) -> Vec<Model> {
                 account_id: account.id.clone(),
                 account_name: account.name.clone(),
                 upstream: id,
+                protocol: account.relay_protocol_or_default().to_string(),
             });
         }
     }
@@ -253,13 +334,36 @@ pub fn select_current(
 
 fn eligible(a: &Account) -> bool {
     a.is_relay()
-        && a.relay_protocol_or_default() == "responses"
+        && (a.relay_protocol_or_default() == "responses"
+            || a.relay_usage_preset.as_deref() == Some("stepfun_plan")
+            || !a.relay_model_catalog.is_empty())
         && !a.is_banned
         && !a.is_logged_out
         && !a.is_token_invalid
         && a.relay_base_url
             .as_deref()
             .is_some_and(|url| !url.is_empty())
+}
+
+/// Return the only native Relay when there is no official/OpenAI
+/// account to serve as `AccountStore.current`.
+///
+/// Native relays normally stay out of `current` because they are
+/// selected independently per model. A relay-only installation still needs a
+/// safe default for clients that send a plain model id (or do not refresh the
+/// model catalog). Only an unambiguous single relay is eligible here; multiple
+/// relays must continue to use their explicit `relay-current:<model>` slugs.
+pub fn relay_only_account_id(store: &AccountStore) -> Option<String> {
+    if store.current.is_some() || store.accounts.values().any(Account::is_openai_account) {
+        return None;
+    }
+    let mut ids = store
+        .accounts
+        .values()
+        .filter(|account| eligible(account))
+        .map(|account| account.id.clone());
+    let id = ids.next()?;
+    ids.next().is_none().then_some(id)
 }
 
 pub fn resolve(store: &AccountStore, slug: &str) -> Option<Model> {
@@ -308,7 +412,8 @@ pub fn catalog_entry(model: &Model, template: Option<&Value>) -> Value {
     };
     let metadata = json!({
         "slug":model.slug, "display_name":format!("{display} · {}",model.account_name),
-        "description":format!("{} via {} (Responses API)",model.upstream,model.account_name),
+        "description":format!("{} via {} ({})",model.upstream,model.account_name,
+            if model.protocol == "chat_completions" { "Chat Completions" } else { "Responses API" }),
         "base_instructions":"", "model_messages":{"instructions_template":"","instructions_variables":{}},
         "visibility":"list", "supported_in_api":true, "priority":50,
         "upgrade":null,"availability_nux":null,"deprecation":null,"retirement_at":null,
@@ -368,7 +473,33 @@ pub fn responses_url(base: &str) -> Result<String, String> {
 
 /// Preserve the native protocol and history. Only the catalog slug is internal.
 pub fn request_body(raw: &[u8], model: &Model) -> Result<Vec<u8>, String> {
+    request_body_with_compaction(raw, model, false)
+}
+
+fn request_contains_compaction_trigger(value: &Value) -> bool {
+    value
+        .get("input")
+        .and_then(Value::as_array)
+        .is_some_and(|input| {
+            input
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("compaction_trigger"))
+        })
+}
+
+/// Build a native Responses payload, optionally preserving ChatGPT's private
+/// compaction items for the dedicated `/responses/compact` endpoint.
+fn request_body_with_compaction(
+    raw: &[u8],
+    model: &Model,
+    preserve_compaction: bool,
+) -> Result<Vec<u8>, String> {
     let mut value: Value = serde_json::from_slice(raw).map_err(|e| e.to_string())?;
+    // Current Codex remote compaction v2 uses the normal `/responses` endpoint
+    // with a `compaction_trigger` input item. Preserve the complete opaque
+    // compaction round-trip for native Responses relays; older non-native
+    // requests still use the compatibility filter below.
+    let preserve_compaction = preserve_compaction || request_contains_compaction_trigger(&value);
     let requested_effort = value
         .pointer("/reasoning/effort")
         .or_else(|| value.get("reasoning_effort"))
@@ -400,25 +531,27 @@ pub fn request_body(raw: &[u8], model: &Model) -> Result<Vec<u8>, String> {
     // compaction/context_compaction 的摘要只有 ChatGPT 后端能解密。
     // 第三方 Responses 端点会严格校验直接 400（Kimi: item type
     // "compaction_trigger" is not supported），relay 只能丢弃。
-    if let Some(input) = value.get_mut("input").and_then(Value::as_array_mut) {
-        let before = input.len();
-        input.retain(|item| {
-            !matches!(
-                item.get("type").and_then(Value::as_str),
-                Some(
-                    "compaction_trigger"
-                        | "compaction"
-                        | "compaction_summary"
-                        | "context_compaction"
+    if !preserve_compaction {
+        if let Some(input) = value.get_mut("input").and_then(Value::as_array_mut) {
+            let before = input.len();
+            input.retain(|item| {
+                !matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some(
+                        "compaction_trigger"
+                            | "compaction"
+                            | "compaction_summary"
+                            | "context_compaction"
+                    )
                 )
-            )
-        });
-        let dropped = before - input.len();
-        if dropped > 0 {
-            println!(
-                "[relay_catalog] {}: 丢弃 {} 个 ChatGPT 私有 compaction item",
-                model.upstream, dropped
-            );
+            });
+            let dropped = before - input.len();
+            if dropped > 0 {
+                println!(
+                    "[relay_catalog] {}: 丢弃 {} 个 ChatGPT 私有 compaction item",
+                    model.upstream, dropped
+                );
+            }
         }
     }
     if model.upstream == "kimi-k3" || model.kimi_coding {
@@ -550,14 +683,43 @@ pub async fn forward_native(
     raw: &[u8],
     model: &Model,
 ) -> Result<reqwest::Response, String> {
+    forward_native_with_compaction(client, base, key, raw, model, false).await
+}
+
+/// Forward a native Responses compaction request without dropping its opaque
+/// compaction item. Third-party Responses relays may reject these items on the
+/// normal endpoint, so this is only used for `/responses/compact`.
+pub async fn forward_native_compact(
+    client: &reqwest::Client,
+    base: &str,
+    key: &str,
+    raw: &[u8],
+    model: &Model,
+) -> Result<reqwest::Response, String> {
+    forward_native_with_compaction(client, base, key, raw, model, true).await
+}
+
+async fn forward_native_with_compaction(
+    client: &reqwest::Client,
+    base: &str,
+    key: &str,
+    raw: &[u8],
+    model: &Model,
+    compact: bool,
+) -> Result<reqwest::Response, String> {
+    let endpoint = if compact {
+        format!("{}/compact", responses_url(base)?.trim_end_matches('/'))
+    } else {
+        responses_url(base)?
+    };
     client
-        .post(responses_url(base)?)
+        .post(endpoint)
         .bearer_auth(key)
         .header("content-type", "application/json")
         .header("accept", "application/json, text/event-stream")
         .header("accept-encoding", "identity")
         .header("user-agent", "codex-switcher-relay/1.0")
-        .body(request_body(raw, model)?)
+        .body(request_body_with_compaction(raw, model, compact)?)
         .send()
         .await
         .map_err(|e| format!("Relay connection failed: {e}"))
@@ -619,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn relay_strips_chatgpt_only_compaction_items() {
+    fn relay_preserves_compaction_items_on_normal_responses() {
         let mut model = models(&store()).pop().unwrap();
         model.upstream = "gemini-3.8-flash-high".into();
         model.kimi_coding = false;
@@ -637,11 +799,41 @@ mod tests {
             &request_body(&serde_json::to_vec(&payload).unwrap(), &model).unwrap(),
         )
         .unwrap();
-        assert_eq!(
-            result["input"],
-            json!([payload["input"][0], payload["input"][4]])
-        );
+        assert_eq!(result["input"], payload["input"]);
         assert_eq!(result["model"], "gemini-3.8-flash-high");
+    }
+
+    #[test]
+    fn compact_request_preserves_chatgpt_compaction_items() {
+        let mut model = models(&store()).pop().unwrap();
+        model.upstream = "native-responses".into();
+        let payload = json!({"model":model.slug,"input":[
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+            {"type":"compaction_trigger"},
+            {"type":"compaction","encrypted_content":"dGVzdA=="},
+            {"type":"context_compaction","encrypted_content":"dGVzdA=="},
+        ]});
+        let result: Value = serde_json::from_slice(
+            &request_body_with_compaction(&serde_json::to_vec(&payload).unwrap(), &model, true)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["input"], payload["input"]);
+    }
+
+    #[test]
+    fn responses_v2_compaction_trigger_is_preserved_on_normal_endpoint() {
+        let mut model = models(&store()).pop().unwrap();
+        model.upstream = "native-responses".into();
+        let payload = json!({"model":model.slug,"input":[
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+            {"type":"compaction_trigger"},
+        ]});
+        let result: Value = serde_json::from_slice(
+            &request_body(&serde_json::to_vec(&payload).unwrap(), &model).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(result["input"], payload["input"]);
     }
 
     #[test]
@@ -998,6 +1190,43 @@ mod tests {
         assert!(store.current.is_none());
         assert_eq!(store.settings.current_relay_accounts.get("k3"), Some(&a.id));
     }
+
+    #[test]
+    fn relay_only_fallback_is_unambiguous_and_does_not_change_current() {
+        let mut store = AccountStore::default();
+        let account = store.add_relay_account(
+            "Responses".into(),
+            "https://relay.example/v1".into(),
+            "test-key".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("gpt-5.5".into()),
+            None,
+            None,
+        );
+        assert_eq!(relay_only_account_id(&store), Some(account.id.clone()));
+        assert!(store.current.is_none());
+
+        let second = store.add_relay_account(
+            "Responses 2".into(),
+            "https://relay-2.example/v1".into(),
+            "test-key-2".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("gpt-5.5".into()),
+            None,
+            None,
+        );
+        assert_ne!(account.id, second.id);
+        assert!(relay_only_account_id(&store).is_none());
+        assert!(store.current.is_none());
+    }
     #[test]
     fn provider_metadata_does_not_inherit_gpt_identity_or_retirement() {
         let model = models(&store()).pop().unwrap();
@@ -1032,6 +1261,22 @@ mod tests {
             assert_eq!(responses_url(base).unwrap(), expected);
         }
         assert!(responses_url("https://user:secret@host/v1").is_err());
+    }
+
+    #[test]
+    fn upstream_models_parser_accepts_openai_shapes_and_deduplicates() {
+        assert_eq!(
+            parse_models_response(&json!({
+                "data": [{"id": "step-5-preview"}, {"id": "step-5-preview"}, {"id": "step-3.7-flash"}]
+            })),
+            vec!["step-3.7-flash", "step-5-preview"]
+        );
+        assert_eq!(
+            parse_models_response(&json!({
+                "models": [{"slug": "step-3.5-flash"}]
+            })),
+            vec!["step-3.5-flash"]
+        );
     }
     #[test]
     fn native_custom_tool_history_is_not_translated() {
